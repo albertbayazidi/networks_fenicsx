@@ -1,4 +1,3 @@
-import os
 import numpy as np
 
 from networks_fenicsx.mesh import mesh_generation
@@ -6,9 +5,6 @@ from networks_fenicsx.solver import assembly, solver
 from networks_fenicsx.config import Config
 from networks_fenicsx.utils.post_processing import export
 
-# Clear fenics cache
-print('Clearing cache')
-os.system('dijitso clean')
 
 cfg = Config()
 cfg.outdir = "demo_Y_bifurcation"

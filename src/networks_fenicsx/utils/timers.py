@@ -4,17 +4,16 @@ from functools import wraps
 from typing import Dict, List
 from mpi4py import MPI
 
-import pandas as pd
 from networks_fenicsx import config
 
-'''
+"""
 This file is based on the graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks - forked on August 2022
 Copyright (C) 2022-2023 by Ingeborg Gjerde
 
 You can freely redistribute it and/or modify it under the terms of the GNU General Public License, version 3.0, provided that the above copyright notice is kept intact and that the source code is made available under an open-source license.
 
 Modified by Cécile Daversin-Catty - 2023
-'''
+"""
 
 
 def timeit(func):
@@ -23,6 +22,7 @@ def timeit(func):
     Args:
         func: function to time
     """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         start = perf_counter()
@@ -36,10 +36,10 @@ def timeit(func):
         # Write to profiling file
         if MPI.COMM_WORLD.rank == 0:
             avg_time = sum_time / MPI.COMM_WORLD.size
-            avg_time_info = f'{func.__name__}: {avg_time:.3f} s \n'  # sum_time / MPI.COMM_WORLD.size
+            avg_time_info = f"{func.__name__}: {avg_time:.3f} s \n"  # sum_time / MPI.COMM_WORLD.size
             p = Path(args[0].cfg.outdir)
             p.mkdir(exist_ok=True)
-            with (p / 'profiling.txt').open('a') as f:
+            with (p / "profiling.txt").open("a") as f:
                 f.write(avg_time_info)
 
         return result
@@ -54,11 +54,11 @@ def timing_dict(config: config.Config):
        str : outdir path
     """
     p = Path(config.outdir)
-    timing_file = (p / 'profiling.txt').open('r')
+    timing_file = (p / "profiling.txt").open("r")
     timing_dict: Dict[str, List[float]] = dict()
 
     for line in timing_file:
-        split_line = line.strip().split(':')
+        split_line = line.strip().split(":")
         keyword = split_line[0]
         value = float(split_line[1].split()[0])
 
@@ -77,17 +77,35 @@ def timing_table(config: config.Config):
        str : outdir path
     """
     t_dict = timing_dict(config)
+    try:
+        import pandas as pd
 
-    if MPI.COMM_WORLD.rank == 0:
-        df = pd.DataFrame({
-            'n': t_dict["n"],
-            'forms': t_dict["compute_forms"],
-            'assembly': t_dict["assemble"],
-            'solve': t_dict["solve"]})
+        if MPI.COMM_WORLD.rank == 0:
+            df = pd.DataFrame(
+                {
+                    "n": t_dict["n"],
+                    "forms": t_dict["compute_forms"],
+                    "assembly": t_dict["assemble"],
+                    "solve": t_dict["solve"],
+                }
+            )
 
-        if config.lm_spaces:
-            df.to_csv(config.outdir + '/timings_lm_spaces.txt', sep='\t', index=False)
-        else:
-            df.to_csv(config.outdir + '/timings_jump_vectors.txt', sep='\t', index=False)
+            if config.lm_spaces:
+                df.to_csv(
+                    config.outdir + "/timings_lm_spaces.txt", sep="\t", index=False
+                )
+            else:
+                df.to_csv(
+                    config.outdir + "/timings_jump_vectors.txt", sep="\t", index=False
+                )
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError("Pandas is required to create timing tables.")
+        # if config.lm_spaces:
+        #     file = open(config.outdir + '/timings_lm_spaces.txt', 'w')
+        # else:
+        #     file = open(config.outdir + '/timings_jump_vectors.txt', 'w')
+
+        # file.write("No timing information available.")
+        # file.close()
 
     return t_dict

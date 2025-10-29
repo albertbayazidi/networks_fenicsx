@@ -1,8 +1,10 @@
 from operator import add
 from ufl import TrialFunction, TestFunction, dx, dot, grad, Constant, Measure
 from dolfinx import fem
+
 # from dolfinx import io
 from dolfinx import mesh as _mesh
+
 # from mpi4py import MPI
 import basix
 from petsc4py import PETSc
@@ -14,7 +16,7 @@ from networks_fenicsx.utils import petsc_utils
 from networks_fenicsx.utils.timers import timeit
 from networks_fenicsx import config
 
-'''
+"""
 This file is based on the graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks - forked on August 2022
 Copyright (C) 2022-2023 by Ingeborg Gjerde
 
@@ -22,10 +24,10 @@ You can freely redistribute it and/or modify it under the terms of the GNU Gener
 
 Modified by Cécile Daversin-Catty - 2023
 Modified by Joseph P. Dean - 2023
-'''
+"""
 
 
-class Assembler():
+class Assembler:
     # TODO
     # G: mesh.NetworkGraph
     # __slots__ = tuple(__annotations__)
@@ -41,17 +43,17 @@ class Assembler():
         self.cfg = config
 
     def dds(self, f):
-        '''
+        """
         function for derivative df/ds along graph
-        '''
+        """
         return dot(grad(f), self.G.global_tangent)
 
     # Compute jump vector when Lagrange multipliers are manually inserted in the matrix
     def jump_vector(self, q, ix, j):
-        '''
+        """
         Returns the signed jump vector for a flux function q on edge ix
         over bifurcation j
-        '''
+        """
 
         edge_list = list(self.G.edges.keys())
 
@@ -61,13 +63,21 @@ class Assembler():
 
         # Add point integrals (jump)
         for i, e in enumerate(self.G.in_edges(j)):
-            ds_edge = Measure('ds', domain=self.G.edges[e]['submesh'], subdomain_data=self.G.edges[e]['vf'])
+            ds_edge = Measure(
+                "ds",
+                domain=self.G.edges[e]["submesh"],
+                subdomain_data=self.G.edges[e]["vf"],
+            )
             edge_ix = edge_list.index(e)
             if ix == edge_ix:
                 L += q * ds_edge(self.G.BIF_IN)
 
         for i, e in enumerate(self.G.out_edges(j)):
-            ds_edge = Measure('ds', domain=self.G.edges[e]['submesh'], subdomain_data=self.G.edges[e]['vf'])
+            ds_edge = Measure(
+                "ds",
+                domain=self.G.edges[e]["submesh"],
+                subdomain_data=self.G.edges[e]["vf"],
+            )
             edge_ix = edge_list.index(e)
             if ix == edge_ix:
                 L -= q * ds_edge(self.G.BIF_OUT)
@@ -78,7 +88,7 @@ class Assembler():
 
     @timeit
     def compute_forms(self, f=None, p_bc_ex=None):
-        '''
+        """
         Compute forms for hydraulic network model
             R q + d/ds p = 0
             d/ds q = f
@@ -88,37 +98,41 @@ class Assembler():
         Args:
            f (dolfinx.fem.function): source term
            p_bc (class): neumann bc for pressure
-        '''
+        """
 
         if f is None:
-            f = Constant(self.G.msh, 0)
+            f = Constant(self.G.mesh, 0)
 
         submeshes = self.G.submeshes()
 
         # Flux spaces on each segment, ordered by the edge list
         # Using equispaced elements to match with legacy FEniCS
         flux_degree = self.cfg.flux_degree
-        flux_element = basix.ufl_wrapper.create_element(
+        flux_element = basix.ufl.element(
             family="Lagrange",
             cell="interval",
             degree=flux_degree,
             lagrange_variant=basix.LagrangeVariant.equispaced,
-            gdim=3)
-        Pqs = [fem.FunctionSpace(submsh, flux_element) for submsh in submeshes]
+        )
+        Pqs = [fem.functionspace(submsh, flux_element) for submsh in submeshes]
 
         pressure_degree = self.cfg.pressure_degree
-        pressure_element = basix.ufl_wrapper.create_element(
+        pressure_element = basix.ufl.element(
             family="Lagrange",
             cell="interval",
             degree=pressure_degree,
             lagrange_variant=basix.LagrangeVariant.equispaced,
-            gdim=3)
-        Pp = fem.FunctionSpace(self.G.msh, pressure_element)
+        )
+        Pp = fem.functionspace(self.G.mesh, pressure_element)
 
         self.function_spaces = Pqs + [Pp]
 
+        if len(self.G.bifurcation_ixs) > 0:
+            raise RuntimeError("Lets fix this")
         self.lm_function_spaces = [
-            fem.FunctionSpace(self.G.lm_smsh, ("Discontinuous Lagrange", 0)) for i in self.G.bifurcation_ixs]
+            fem.functionspace(self.G.lm_smsh, ("Discontinuous Lagrange", 0))
+            for i in self.G.bifurcation_ixs
+        ]
 
         # Fluxes on each branch
         qs = []
@@ -135,16 +149,26 @@ class Assembler():
                 lmbdas.append(TrialFunction(fs))
                 mus.append(TestFunction(fs))
         else:
-            self.L_jumps = [[self.jump_vector(q, ix, j) for j in self.G.bifurcation_ixs] for ix, q in enumerate(qs)]
+            self.L_jumps = [
+                [self.jump_vector(q, ix, j) for j in self.G.bifurcation_ixs]
+                for ix, q in enumerate(qs)
+            ]
 
         # Pressure
         p = TrialFunction(Pp)
         phi = TestFunction(Pp)
 
         # Assemble variational formulation
-        dx_zero = Measure('dx', domain=self.G.msh, subdomain_data=_mesh.meshtags(self.G.msh,
-                                                                                 self.G.msh.topology.dim, np.array([], dtype=np.int32),
-                                                                                 np.array([], dtype=np.int32)))
+        dx_zero = Measure(
+            "dx",
+            domain=self.G.mesh,
+            subdomain_data=_mesh.meshtags(
+                self.G.mesh,
+                self.G.mesh.topology.dim,
+                np.array([], dtype=np.int32),
+                np.array([], dtype=np.int32),
+            ),
+        )
 
         # Initialize forms
         num_qs = len(submeshes)
@@ -155,23 +179,29 @@ class Assembler():
 
         # Assemble edge contributions to a and L
         for i, e in enumerate(self.G.edges):
-
-            submsh = self.G.edges[e]['submesh']
-            entity_maps = {self.G.msh: self.G.edges[e]['entity_map']}
+            submsh = self.G.edges[e]["submesh"]
+            entity_maps = {self.G.mesh: self.G.edges[e]["entity_map"]}
 
             dx_edge = Measure("dx", domain=submsh)
-            ds_edge = Measure('ds', domain=submsh, subdomain_data=self.G.edges[e]['vf'])
+            ds_edge = Measure("ds", domain=submsh, subdomain_data=self.G.edges[e]["vf"])
 
             self.a[i][i] = fem.form(qs[i] * vs[i] * dx_edge)
-            self.a[num_qs][i] = fem.form(phi * self.dds(qs[i]) * dx_edge, entity_maps=entity_maps)
-            self.a[i][num_qs] = fem.form(-p * self.dds(vs[i]) * dx_edge, entity_maps=entity_maps)
+            self.a[num_qs][i] = fem.form(
+                phi * self.dds(qs[i]) * dx_edge, entity_maps=entity_maps
+            )
+            self.a[i][num_qs] = fem.form(
+                -p * self.dds(vs[i]) * dx_edge, entity_maps=entity_maps
+            )
 
             # Boundary condition on the correct space
-            P1_e = fem.FunctionSpace(self.G.edges[e]['submesh'], ("Lagrange", 1))
+            P1_e = fem.functionspace(self.G.edges[e]["submesh"], ("Lagrange", 1))
             p_bc = fem.Function(P1_e)
             p_bc.interpolate(p_bc_ex.eval)
 
-            self.L[i] = fem.form(p_bc * vs[i] * ds_edge(self.G.BOUN_IN) - p_bc * vs[i] * ds_edge(self.G.BOUN_OUT))
+            self.L[i] = fem.form(
+                p_bc * vs[i] * ds_edge(self.G.BOUN_IN)
+                - p_bc * vs[i] * ds_edge(self.G.BOUN_OUT)
+            )
 
         if self.cfg.lm_spaces:
             edge_list = list(self.G.edges.keys())
@@ -179,24 +209,46 @@ class Assembler():
             for j, bix in enumerate(self.G.bifurcation_ixs):
                 # Add point integrals (jump)
                 for i, e in enumerate(self.G.in_edges(bix)):
-                    ds_edge = Measure('ds', domain=self.G.edges[e]['submesh'], subdomain_data=self.G.edges[e]['vf'])
+                    ds_edge = Measure(
+                        "ds",
+                        domain=self.G.edges[e]["submesh"],
+                        subdomain_data=self.G.edges[e]["vf"],
+                    )
                     edge_ix = edge_list.index(e)
                     assert self.a[num_qs + 1 + j][edge_ix] is None
                     assert self.a[edge_ix][num_qs + 1 + j] is None
 
-                    self.a[num_qs + 1 + j][edge_ix] = fem.form(mus[j] * qs[edge_ix] * ds_edge(self.G.BIF_IN), entity_maps=entity_maps)
-                    self.a[edge_ix][num_qs + 1 + j] = fem.form(lmbdas[j] * vs[edge_ix] * ds_edge(self.G.BIF_IN), entity_maps=entity_maps)
+                    self.a[num_qs + 1 + j][edge_ix] = fem.form(
+                        mus[j] * qs[edge_ix] * ds_edge(self.G.BIF_IN),
+                        entity_maps=entity_maps,
+                    )
+                    self.a[edge_ix][num_qs + 1 + j] = fem.form(
+                        lmbdas[j] * vs[edge_ix] * ds_edge(self.G.BIF_IN),
+                        entity_maps=entity_maps,
+                    )
 
                 for i, e in enumerate(self.G.out_edges(bix)):
-                    ds_edge = Measure('ds', domain=self.G.edges[e]['submesh'], subdomain_data=self.G.edges[e]['vf'])
+                    ds_edge = Measure(
+                        "ds",
+                        domain=self.G.edges[e]["submesh"],
+                        subdomain_data=self.G.edges[e]["vf"],
+                    )
                     edge_ix = edge_list.index(e)
                     assert self.a[num_qs + 1 + j][edge_ix] is None
                     assert self.a[edge_ix][num_qs + 1 + j] is None
 
-                    self.a[num_qs + 1 + j][edge_ix] = fem.form(- mus[j] * qs[edge_ix] * ds_edge(self.G.BIF_OUT), entity_maps=entity_maps)
-                    self.a[edge_ix][num_qs + 1 + j] = fem.form(- lmbdas[j] * vs[edge_ix] * ds_edge(self.G.BIF_OUT), entity_maps=entity_maps)
+                    self.a[num_qs + 1 + j][edge_ix] = fem.form(
+                        -mus[j] * qs[edge_ix] * ds_edge(self.G.BIF_OUT),
+                        entity_maps=entity_maps,
+                    )
+                    self.a[edge_ix][num_qs + 1 + j] = fem.form(
+                        -lmbdas[j] * vs[edge_ix] * ds_edge(self.G.BIF_OUT),
+                        entity_maps=entity_maps,
+                    )
 
-                self.L[num_qs + 1 + j] = fem.form(1e-16 * mus[j] * dx)  # TODO Use constant
+                self.L[num_qs + 1 + j] = fem.form(
+                    1e-16 * mus[j] * dx
+                )  # TODO Use constant
 
         # Add zero to uninitialized diagonal blocks (needed by petsc)
         zero = fem.Function(Pp)
@@ -241,24 +293,39 @@ class Assembler():
             b_.setValuesBlocked(range(_b_size), _b_values)
 
             # Assemble jump vectors and convert to PETSc.Mat() object
-            self.jump_vectors = [[fem.petsc.assemble_vector(L) for L in qi] for qi in self.L_jumps]
-            jump_vecs = [[petsc_utils.convert_vec_to_petscmatrix(b_row) for b_row in qi] for qi in self.jump_vectors]
+            self.jump_vectors = [
+                [fem.petsc.assemble_vector(L) for L in qi] for qi in self.L_jumps
+            ]
+            jump_vecs = [
+                [petsc_utils.convert_vec_to_petscmatrix(b_row) for b_row in qi]
+                for qi in self.jump_vectors
+            ]
 
             # Insert jump vectors into A_new
             for i in range(0, num_bifs):
                 for j in range(0, self.G.num_edges):
                     jump_vec = jump_vecs[j][i]
-                    jump_vec_values = jump_vec.getValues(range(jump_vec.getSize()[0]), range(jump_vec.getSize()[1]))[0]
-                    A_.setValuesBlocked(_A_size[0] + i,
-                                        range(jump_vec.getSize()[1] * j,
-                                              jump_vec.getSize()[1] * (j + 1)),
-                                        jump_vec_values)
+                    jump_vec_values = jump_vec.getValues(
+                        range(jump_vec.getSize()[0]), range(jump_vec.getSize()[1])
+                    )[0]
+                    A_.setValuesBlocked(
+                        _A_size[0] + i,
+                        range(
+                            jump_vec.getSize()[1] * j, jump_vec.getSize()[1] * (j + 1)
+                        ),
+                        jump_vec_values,
+                    )
                     jump_vec.transpose()
-                    jump_vec_T_values = jump_vec.getValues(range(jump_vec.getSize()[0]), range(jump_vec.getSize()[1]))
-                    A_.setValuesBlocked(range(jump_vec.getSize()[0] * j,
-                                              jump_vec.getSize()[0] * (j + 1)),
-                                        _A_size[1] + i,
-                                        jump_vec_T_values)
+                    jump_vec_T_values = jump_vec.getValues(
+                        range(jump_vec.getSize()[0]), range(jump_vec.getSize()[1])
+                    )
+                    A_.setValuesBlocked(
+                        range(
+                            jump_vec.getSize()[0] * j, jump_vec.getSize()[0] * (j + 1)
+                        ),
+                        _A_size[1] + i,
+                        jump_vec_T_values,
+                    )
 
             # Assembling A and b
             A_.assemble()
@@ -270,19 +337,25 @@ class Assembler():
 
     def bilinear_forms(self):
         if self.a is None:
-            logging.error("Bilinear forms haven't been computed. Need to call compute_forms()")
+            logging.error(
+                "Bilinear forms haven't been computed. Need to call compute_forms()"
+            )
         else:
             return self.a
 
     def bilinear_form(self, i: int, j: int):
         a = self.bilinear_forms()
         if i > len(a) or j > len(a[i]):
-            logging.error("Bilinear form a[" + str(i) + "][" + str(j) + "] out of range")
+            logging.error(
+                "Bilinear form a[" + str(i) + "][" + str(j) + "] out of range"
+            )
         return a[i][j]
 
     def linear_forms(self):
         if self.L is None:
-            logging.error("Linear forms haven't been computed. Need to call compute_forms()")
+            logging.error(
+                "Linear forms haven't been computed. Need to call compute_forms()"
+            )
         else:
             return self.L
 
