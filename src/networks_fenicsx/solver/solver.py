@@ -44,6 +44,7 @@ class Solver:
             ksp.getPC().setFactorSolverType("mumps")
         else:
             ksp.getPC().setFactorSolverType("umfpack")
+        ksp.setErrorIfNotConverged(True)
 
         # Solve
         x = self.A.createVecLeft()

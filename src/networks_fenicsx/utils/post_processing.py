@@ -7,7 +7,6 @@ import numpy as np
 
 from networks_fenicsx.mesh import mesh
 from networks_fenicsx import config
-from networks_fenicsx.utils.mesh_utils import transfer_submesh_data
 
 
 def export(
@@ -27,6 +26,7 @@ def export(
     fluxes = []
     start = 0
 
+    # Flux spaces are the first M ones
     for i, (submesh, entity_map) in enumerate(zip(graph.submeshes, graph.entity_maps)):
         q_space = function_spaces[i]
         q = fem.Function(q_space)
@@ -49,12 +49,14 @@ def export(
             cells0=np.arange(num_cells_local, dtype=np.int32),
             cells1=submesh_to_parent,
         )
-
+    # Then we have the pressure space
     offset = p_space.dofmap.index_map.size_local * p_space.dofmap.index_map_bs
     pressure = fem.Function(p_space)
-    pressure.x.array[: (len(sol.array_r) - start)] = sol.array_r[start : start + offset]
+    pressure.x.array[:offset] = sol.array_r[start : start + offset]
     pressure.x.scatter_forward()
 
+    # Last we have LM
+    # NOTE: ADD processing here
     # Write to file
     for i, q in enumerate(fluxes):
         with io.VTXWriter(
@@ -63,9 +65,7 @@ def export(
             q,
         ) as f:
             f.write(0.0)
-    with io.VTXWriter(
-        MPI.COMM_WORLD, config.outdir + "/" + export_dir + "/flux.bp", global_q
-    ) as f:
+    with io.VTXWriter(MPI.COMM_WORLD, config.outdir + "/" + export_dir + "/flux.bp", global_q) as f:
         f.write(0.0)
     with io.VTXWriter(
         MPI.COMM_WORLD, config.outdir + "/" + export_dir + "/pressure.bp", pressure
