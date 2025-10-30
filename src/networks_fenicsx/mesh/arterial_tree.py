@@ -44,13 +44,12 @@ Then it depends on the diameters
 
 def make_arterial_tree(
     N,
-    cfg: config.Config,
     radius0=1,
     gam=0.8,
     lmbda=8,
     directions=False,
     uniform_lengths=False,
-):
+) -> nx.DiGraph:
     """
     N (int): number of levels in the arterial tree
     radius0 (float): radius of first vessel
@@ -182,13 +181,6 @@ def make_arterial_tree(
                     current_edges.append(new_edge)
 
         previous_edges = current_edges
-
-    # Convert to NetworkGraph
-    G = to_networks_graph(G, cfg)
-
-    G.build_mesh()
-    G.build_network_submeshes()
-    G.compute_tangent()
 
     return G
 

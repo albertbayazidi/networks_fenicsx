@@ -1,59 +1,63 @@
-import networkx as nx
-import numpy as np
-from typing import List
-import copy
-import basix.ufl
-from mpi4py import MPI
-from dolfinx import fem, io as _io, mesh, graph
-import ufl
-
-from networks_fenicsx.utils.timers import timeit
-from networks_fenicsx import config
-
 """
-This file is based on the graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks - forked on August 2022
-Copyright (C) 2022-2023 by Ingeborg Gjerde
+Interface for converting a networkx graph into a {py:class}`dolfinx.mesh.Mesh`.
 
-You can freely redistribute it and/or modify it under the terms of the GNU General Public License, version 3.0, provided that the above copyright notice is kept intact and that the source code is made available under an open-source license.
+This idea stems from the Graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks
+by Ingeborg Gjerde.
 
 Modified by Cécile Daversin-Catty - 2023
 Modified by Joseph P. Dean - 2023
 Modified by Jørgen S. Dokken - 2025
 """
 
+import networkx as nx
+import numpy as np
+import basix.ufl
+from mpi4py import MPI
+from dolfinx import fem, io as _io, mesh, graph as _graph
+import ufl
 
-class NetworkGraph(nx.DiGraph):
-    """
-    Make FEniCSx mesh from networkx directed graph
+from networks_fenicsx.utils.timers import timeit
+from networks_fenicsx import config
+
+__all__ = ["NetworkMesh", "compute_tangent"]
+
+
+class NetworkMesh:
+    """A representation of a Networkx graph in DOLFINx.
+
+    Stores the resulting mesh, subdomains, and facet markers for bifurcations and boundary nodes.
+    Has a globally oriented tangent vector field.
+    Has a submesh for each edge in the Networkx graph.
     """
 
+    # Configuration
+    _cfg: config.Config
+
+    # Graph properties
+    _geom_dim: int
+    _num_segments: int
+
+    # Mesh properties
     _msh: mesh.Mesh | None
     _subdomains: mesh.MeshTags | None
     _facet_markers: mesh.MeshTags | None
+    _edge_meshes = list[mesh.Mesh]
+    _edge_entity_maps = list[mesh.EntityMap]
+    _tangent: fem.Function
 
-    def __init__(self, config: config.Config, graph: nx.DiGraph = None):
-        nx.DiGraph.__init__(self, graph)
+    def __init__(self, graph: nx.DiGraph, config: config.Config):
+        self._cfg = config
+        self._cfg.clean_dir()
+        self._build_mesh(graph)
+        self._build_network_submeshes()
+        self._tangent = compute_tangent(self.mesh)
 
-        self.comm = MPI.COMM_WORLD
-        self.cfg = config
-        self.cfg.clean_dir()
-
-        self.bifurcation_ixs: List[int] = []  # noqa: F821
-        self.boundary_ixs: List[int] = []  # noqa: F821
-
-        self._msh = None
-        self.lm_smsh = None
-        self._subdomains = None
-        self._facet_markers = None
-        self.global_tangent = None
-
-        self.BIF_IN = 1
-        self.BIF_OUT = 2
-        self.BOUN_IN = 3
-        self.BOUN_OUT = 4
+    @property
+    def cfg(self) -> config.Config:
+        return self._cfg
 
     @timeit
-    def build_mesh(self):
+    def _build_mesh(self, graph: nx.DiGraph):
         """Convert the networkx graph into a {py:class}`dolfinx.mesh.Mesh`.
 
         The element size is controlled by `self.cfg.lcar`.
@@ -65,17 +69,19 @@ class NetworkGraph(nx.DiGraph):
             `self.boundaries`.
         """
 
-        self.geom_dim = len(self.nodes[1]["pos"])
-        self.num_edges = len(self.edges)
+        self._geom_dim = len(graph.nodes[1]["pos"])
 
-        vertex_coords = np.asarray([self.nodes[v]["pos"] for v in self.nodes()])
-        cells_array = np.asarray([[u, v] for u, v in self.edges()])
+        vertex_coords = np.asarray([graph.nodes[v]["pos"] for v in graph.nodes()])
+        cells_array = np.asarray([[u, v] for u, v in graph.edges()])
 
         line_weights = np.linspace(
             0, 1, int(np.ceil(1 / self.cfg.lcar)), endpoint=False
         )[1:][:, None]
 
+        self._num_segments = cells_array.shape[0]
         # Create mesh segments
+        # TODO: Extract graph coloring coloring information to reduce the number of unique cell markers,
+        # which results in a reduction in the number of submeshes.
         if MPI.COMM_WORLD.rank == 0:
             mesh_nodes = vertex_coords.copy()
             cells = []
@@ -116,6 +122,7 @@ class NetworkGraph(nx.DiGraph):
             cells = np.empty((0, 2), dtype=np.int64)
             mesh_nodes = np.empty((0, self.geom_dim), dtype=np.float64)
             cell_markers = np.empty((0,), dtype=np.int32)
+
         bifurcations, num_connections = np.unique(
             cells_array.flatten(), return_counts=True
         )
@@ -141,7 +148,7 @@ class NetworkGraph(nx.DiGraph):
         self._subdomains = mesh.meshtags_from_entities(
             self.mesh,
             self.mesh.topology.dim,
-            graph.adjacencylist(local_entities),
+            _graph.adjacencylist(local_entities),
             local_values,
         )
 
@@ -158,7 +165,7 @@ class NetworkGraph(nx.DiGraph):
         self._facet_markers = mesh.meshtags_from_entities(
             self.mesh,
             0,
-            graph.adjacencylist(local_bifurcations),
+            _graph.adjacencylist(local_bifurcations),
             local_bifurcation_values,
         )
         self.subdomains.name = "subdomains"
@@ -171,55 +178,22 @@ class NetworkGraph(nx.DiGraph):
                 file.write_meshtags(self.subdomains, self.mesh.geometry)
                 file.write_meshtags(self.boundaries, self.mesh.geometry)
 
-        # Submesh for the Lagrange multiplier
-        # self.lm_smsh = mesh.create_submesh(self.mesh, self.mesh.topology.dim, [0])[0]
-
     @timeit
-    def build_network_submeshes(self):
-        for i, (u, v) in enumerate(self.edges):
-            edge_subdomain = self.subdomains.find(i)
+    def _build_network_submeshes(self):
+        """Create submeshes for each edge in the network."""
+        assert self._msh is not None
+        assert self._subdomains is not None
+        assert self._facet_markers is not None
+        assert len(self._edge_meshes) == 0
+        assert len(self._edge_entity_maps) == 0
+        for i in range(self._num_segments):
+            edge_subdomain = self.subdomains.array[self.subdomains.indices == i]
 
-            self.edges[u, v]["submesh"], self.edges[u, v]["entity_map"] = (
-                mesh.create_submesh(self.mesh, self.mesh.topology.dim, edge_subdomain)[
-                    0:2
-                ]
-            )
-            self.edges[u, v]["tag"] = i
-
-            self.edges[u, v]["entities"] = []
-            self.edges[u, v]["b_values"] = []
-
-    @timeit
-    def compute_tangent(self):
-        """Compute tangent vector for all cells.
-
-        Tangent is oriented according to positive y-axis.
-        If perpendicular to y-axis, align with x-axis.
-
-        Note:
-            Assuming that the mesh is affine.
-        """
-        cell_map = self.mesh.topology.index_map(self.mesh.topology.dim)
-        geom_indices = mesh.entities_to_geometry(
-            self.mesh,
-            self.mesh.topology.dim,
-            np.arange(cell_map.size_local + cell_map.num_ghosts, dtype=np.int32),
-        )
-        geom_coordinates = self.mesh.geometry.x[geom_indices]
-        tangent = geom_coordinates[:, 0, :] - geom_coordinates[:, 1, :]
-        global_orientation = np.sign(np.dot(tangent, [0, 1, 0]))
-        is_x_aligned = np.isclose(global_orientation, 0)
-        global_orientation[is_x_aligned] = np.sign(
-            np.dot(tangent[is_x_aligned], [1, 0, 0])
-        )
-        tangent *= global_orientation[:, None]
-        assert np.all(np.linalg.norm(tangent, axis=1) > 0), (
-            "Zero-length tangent vector detected"
-        )
-        gdim = self.mesh.geometry.dim
-        DG0 = fem.functionspace(self.mesh, ("DG", 0, (gdim,)))
-        self.global_tangent = fem.Function(DG0)
-        self.global_tangent.x.array[:] = tangent.flatten()
+            edge_mesh, edge_map = mesh.create_submesh(
+                self.mesh, self.mesh.topology.dim, edge_subdomain
+            )[0:2]
+            self._edge_meshes.append(edge_mesh)
+            self._edge_entity_maps.append(edge_map)
 
     @property
     def mesh(self):
@@ -239,16 +213,55 @@ class NetworkGraph(nx.DiGraph):
             raise RuntimeError("Mesh has no boundaries/facet markers")
         return self._facet_markers
 
+    @property
     def submeshes(self):
-        return list(nx.get_edge_attributes(self, "submesh").values())
+        if len(self._edge_meshes) == 0:
+            raise RuntimeError(
+                "Submeshes have not been built yet. Call build_network_submeshes() first."
+            )
+        return self._edge_meshes
 
+    @property
     def tangent(self):
+        return self._tangent
+
+    def export_tangent(self):
         if self.cfg.export:
-            self.global_tangent.x.scatter_forward()
             with _io.XDMFFile(
                 self.comm, self.cfg.outdir + "/mesh/tangent.xdmf", "w"
             ) as file:
                 file.write_mesh(self.mesh)
-                file.write_function(self.global_tangent)
+                file.write_function(self.tangent)
+        else:
+            print("Export of tangent skipped as cfg.export is set to False.")
 
-        return self.global_tangent
+
+def compute_tangent(domain: mesh.Mesh) -> fem.Function:
+    """Compute tangent vector for all cells.
+
+    Tangent is oriented according to positive y-axis.
+    If perpendicular to y-axis, align with x-axis.
+
+    Note:
+        Assuming that the mesh is affine.
+    """
+    cell_map = domain.topology.index_map(domain.topology.dim)
+    geom_indices = mesh.entities_to_geometry(
+        domain,
+        domain.topology.dim,
+        np.arange(cell_map.size_local + cell_map.num_ghosts, dtype=np.int32),
+    )
+    geom_coordinates = domain.geometry.x[geom_indices]
+    tangent = geom_coordinates[:, 0, :] - geom_coordinates[:, 1, :]
+    global_orientation = np.sign(np.dot(tangent, [0, 1, 0]))
+    is_x_aligned = np.isclose(global_orientation, 0)
+    global_orientation[is_x_aligned] = np.sign(np.dot(tangent[is_x_aligned], [1, 0, 0]))
+    tangent *= global_orientation[:, None]
+    assert np.all(np.linalg.norm(tangent, axis=1) > 0), (
+        "Zero-length tangent vector detected"
+    )
+    gdim = domain.geometry.dim
+    DG0 = fem.functionspace(domain, ("DG", 0, (gdim,)))
+    global_tangent = fem.Function(DG0)
+    global_tangent.x.array[:] = tangent.flatten()
+    return global_tangent
