@@ -1,6 +1,16 @@
 from operator import add
-from ufl import TrialFunction, TestFunction, dx, dot, grad, Constant, Measure
+from ufl import (
+    TrialFunction,
+    TestFunction,
+    dx,
+    dot,
+    grad,
+    Constant,
+    Measure,
+    ZeroBaseForm,
+)
 from dolfinx import fem
+import ufl
 
 # from dolfinx import io
 from dolfinx import mesh as _mesh
@@ -27,15 +37,23 @@ Modified by Joseph P. Dean - 2023
 """
 
 
-class Assembler:
-    # TODO
-    # G: mesh.NetworkGraph
-    # __slots__ = tuple(__annotations__)
+def flux_term(q, facet_marker, tag):
+    ds = ufl.Measure(
+        "ds",
+        domain=q.ufl_function_space().mesh,
+        subdomain_data=facet_marker,
+        subdomain_id=tag,
+    )
+    return q * ds
 
-    def __init__(self, config: config.Config, graph: mesh.NetworkGraph):
-        self.G = graph
+
+class Assembler:
+    _network_mesh: mesh.NetworkMesh
+
+    def __init__(self, config: config.Config, mesh: mesh.NetworkMesh):
+        self._network_mesh = mesh
         self.function_spaces = None
-        self.lm_function_spaces = None
+        self.lm_space = None
         self.a = None
         self.L = None
         self.A = None
@@ -46,45 +64,7 @@ class Assembler:
         """
         function for derivative df/ds along graph
         """
-        return dot(grad(f), self.G.global_tangent)
-
-    # Compute jump vector when Lagrange multipliers are manually inserted in the matrix
-    def jump_vector(self, q, ix, j):
-        """
-        Returns the signed jump vector for a flux function q on edge ix
-        over bifurcation j
-        """
-
-        edge_list = list(self.G.edges.keys())
-
-        # Iitialize form to zero
-        zero = fem.Function(q.ufl_function_space())
-        L = zero * q * dx
-
-        # Add point integrals (jump)
-        for i, e in enumerate(self.G.in_edges(j)):
-            ds_edge = Measure(
-                "ds",
-                domain=self.G.edges[e]["submesh"],
-                subdomain_data=self.G.edges[e]["vf"],
-            )
-            edge_ix = edge_list.index(e)
-            if ix == edge_ix:
-                L += q * ds_edge(self.G.BIF_IN)
-
-        for i, e in enumerate(self.G.out_edges(j)):
-            ds_edge = Measure(
-                "ds",
-                domain=self.G.edges[e]["submesh"],
-                subdomain_data=self.G.edges[e]["vf"],
-            )
-            edge_ix = edge_list.index(e)
-            if ix == edge_ix:
-                L -= q * ds_edge(self.G.BIF_OUT)
-
-        L = fem.form(L)
-
-        return L
+        return dot(grad(f), self._network_mesh.tangent)
 
     @timeit
     def compute_forms(self, f=None, p_bc_ex=None):
@@ -101,9 +81,9 @@ class Assembler:
         """
 
         if f is None:
-            f = Constant(self.G.mesh, 0)
+            f = Constant(self._network_mesh.mesh, 0)
 
-        submeshes = self.G.submeshes()
+        submeshes = self._network_mesh.submeshes
 
         # Flux spaces on each segment, ordered by the edge list
         # Using equispaced elements to match with legacy FEniCS
@@ -123,16 +103,12 @@ class Assembler:
             degree=pressure_degree,
             lagrange_variant=basix.LagrangeVariant.equispaced,
         )
-        Pp = fem.functionspace(self.G.mesh, pressure_element)
+        Pp = fem.functionspace(self._network_mesh.mesh, pressure_element)
 
         self.function_spaces = Pqs + [Pp]
 
-        if len(self.G.bifurcation_ixs) > 0:
-            raise RuntimeError("Lets fix this")
-        self.lm_function_spaces = [
-            fem.functionspace(self.G.lm_smsh, ("Discontinuous Lagrange", 0))
-            for i in self.G.bifurcation_ixs
-        ]
+        if self.cfg.lm_spaces:
+            self.lm_space = fem.functionspace(self._network_mesh.lm_mesh, ("DG", 0))
 
         # Fluxes on each branch
         qs = []
@@ -145,30 +121,40 @@ class Assembler:
         lmbdas = []
         mus = []
         if self.cfg.lm_spaces:
-            for fs in self.lm_function_spaces:
-                lmbdas.append(TrialFunction(fs))
-                mus.append(TestFunction(fs))
+            lmbdas.append(TrialFunction(self.lm_space))
+            mus.append(TestFunction(self.lm_space))
         else:
-            self.L_jumps = [
-                [self.jump_vector(q, ix, j) for j in self.G.bifurcation_ixs]
-                for ix, q in enumerate(qs)
+            # Manually computes the oriented jump vectors for the bifurcation conditions
+            L_jumps = [
+                [ufl.ZeroBaseForm((q,)) for _ in self._network_mesh.bifurcation_values]
+                for q in qs
             ]
-
+            for i, submesh in enumerate(self._network_mesh.submeshes):
+                for j, bifurcation in enumerate(self._network_mesh.bifurcation_values):
+                    # Add flux contribution from incoming edges
+                    in_edges = self._network_mesh.in_edges(bifurcation)
+                    for edge in in_edges:
+                        if edge == i:
+                            L_jumps[i][j] += flux_term(
+                                qs[edge],
+                                self._network_mesh.submesh_facet_markers[edge],
+                                bifurcation,
+                            )
+                    # Subtract flux contribution from outgoing edges
+                    out_edges = self._network_mesh.out_edges(bifurcation)
+                    for edge in out_edges:
+                        if edge == i:
+                            L_jumps[i][j] -= flux_term(
+                                qs[edge],
+                                self._network_mesh.submesh_facet_markers[edge],
+                                bifurcation,
+                            )
+            self.L_jumps = fem.form(L_jumps)
         # Pressure
         p = TrialFunction(Pp)
         phi = TestFunction(Pp)
-
         # Assemble variational formulation
-        dx_zero = Measure(
-            "dx",
-            domain=self.G.mesh,
-            subdomain_data=_mesh.meshtags(
-                self.G.mesh,
-                self.G.mesh.topology.dim,
-                np.array([], dtype=np.int32),
-                np.array([], dtype=np.int32),
-            ),
-        )
+        network_mesh = self._network_mesh
 
         # Initialize forms
         num_qs = len(submeshes)
@@ -178,29 +164,33 @@ class Assembler:
         self.L = [None] * num_blocks
 
         # Assemble edge contributions to a and L
-        for i, e in enumerate(self.G.edges):
-            submsh = self.G.edges[e]["submesh"]
-            entity_maps = {self.G.mesh: self.G.edges[e]["entity_map"]}
-
-            dx_edge = Measure("dx", domain=submsh)
-            ds_edge = Measure("ds", domain=submsh, subdomain_data=self.G.edges[e]["vf"])
+        for i, (submesh, entity_map, facet_marker) in enumerate(
+            zip(
+                network_mesh.submeshes,
+                network_mesh.entity_maps,
+                network_mesh.submesh_facet_markers,
+            )
+        ):
+            dx_edge = Measure("dx", domain=submesh)
+            ds_edge = Measure("ds", domain=submesh, subdomain_data=facet_marker)
 
             self.a[i][i] = fem.form(qs[i] * vs[i] * dx_edge)
             self.a[num_qs][i] = fem.form(
-                phi * self.dds(qs[i]) * dx_edge, entity_maps=entity_maps
+                phi * self.dds(qs[i]) * dx_edge, entity_maps=[entity_map]
             )
             self.a[i][num_qs] = fem.form(
-                -p * self.dds(vs[i]) * dx_edge, entity_maps=entity_maps
+                -p * self.dds(vs[i]) * dx_edge, entity_maps=[entity_map]
             )
 
             # Boundary condition on the correct space
-            P1_e = fem.functionspace(self.G.edges[e]["submesh"], ("Lagrange", 1))
+            P1_e = fem.functionspace(submesh, ("Lagrange", 1))
             p_bc = fem.Function(P1_e)
             p_bc.interpolate(p_bc_ex.eval)
 
+            # Add all boundary contributions
             self.L[i] = fem.form(
-                p_bc * vs[i] * ds_edge(self.G.BOUN_IN)
-                - p_bc * vs[i] * ds_edge(self.G.BOUN_OUT)
+                p_bc * vs[i] * ds_edge(network_mesh.in_nodes)
+                - p_bc * vs[i] * ds_edge(network_mesh.out_nodes)
             )
 
         if self.cfg.lm_spaces:
@@ -251,9 +241,8 @@ class Assembler:
                 )  # TODO Use constant
 
         # Add zero to uninitialized diagonal blocks (needed by petsc)
-        zero = fem.Function(Pp)
-        self.a[num_qs][num_qs] = fem.form(zero * p * phi * dx_zero)
-        self.L[num_qs] = fem.form(zero * phi * dx_zero)
+        self.a[num_qs][num_qs] = fem.form(ufl.ZeroBaseForm((p, phi)))
+        self.L[num_qs] = fem.form(ufl.ZeroBaseForm((phi,)))
 
     @timeit
     def assemble(self):
@@ -262,10 +251,10 @@ class Assembler:
         L = self.linear_forms()
 
         # Assemble system from the given forms
-        A = fem.petsc.assemble_matrix_block(a)
+        A = fem.petsc.assemble_matrix(a)
         A.assemble()
-        b = fem.petsc.assemble_vector_block(L, a)
-        b.assemble()
+        b = fem.petsc.assemble_vector(L)
+        b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
         if self.cfg.lm_spaces:
             self.A = A
@@ -279,7 +268,7 @@ class Assembler:
             _b_values = b.getValues(range(_b_size))
 
             # Build new system to include Lagrange multipliers for the bifurcation conditions
-            num_bifs = len(self.G.bifurcation_ixs)
+            num_bifs = len(self._network_mesh.bifurcation_values)
             A_ = PETSc.Mat().create()
             A_.setSizes(list(map(add, _A_size, (num_bifs, num_bifs))))
             A_.setUp()
@@ -303,7 +292,7 @@ class Assembler:
 
             # Insert jump vectors into A_new
             for i in range(0, num_bifs):
-                for j in range(0, self.G.num_edges):
+                for j in range(0, self._network_mesh._num_segments):
                     jump_vec = jump_vecs[j][i]
                     jump_vec_values = jump_vec.getValues(
                         range(jump_vec.getSize()[0]), range(jump_vec.getSize()[1])

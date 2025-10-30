@@ -21,7 +21,7 @@ class Solver:
     def __init__(
         self,
         config: config.Config,
-        graph: mesh.NetworkGraph,
+        graph: mesh.NetworkMesh,
         assembler: assembly.Assembler,
     ):
         self.G = graph
