@@ -84,10 +84,11 @@ class Assembler:
         self._pressure_space = Pp
         self._lm_space = fem.functionspace(self._network_mesh.lm_mesh, ("DG", 0))
 
-        self.a = None
-        self.L = None
-        self.A = None
-        self.L = None
+        # Initialize forms
+        num_qs = len(self._network_mesh.submeshes)
+        num_blocks = num_qs + int(self.cfg.lm_spaces) + 1
+        self.a = [[None] * num_blocks for _ in range(num_blocks)]
+        self.L = [None] * num_blocks
 
     @property
     def cfg(self):
@@ -161,12 +162,8 @@ class Assembler:
         # Assemble variational formulation
         network_mesh = self._network_mesh
 
-        # Initialize forms
-        num_qs = len(self._network_mesh.submeshes)
-        num_blocks = num_qs + int(self.cfg.lm_spaces) + 1
-        self.a = [[None] * num_blocks for i in range(num_blocks)]
-        self.L = [None] * num_blocks
         # Assemble edge contributions to a and L
+        num_qs = len(self._network_mesh.submeshes)
         for i, (submesh, entity_map, facet_marker) in enumerate(
             zip(
                 network_mesh.submeshes,
@@ -276,23 +273,20 @@ class Assembler:
         return [*self._flux_spaces, self._pressure_space, self._lm_space]
 
     @timeit
-    def assemble(self):
+    def assemble(self) -> tuple[PETSc.Mat, PETSc.Vec]:
         # Get the forms
         a = self.bilinear_forms()
         L = self.linear_forms()
 
         # Assemble system from the given forms
-        # A04 = fem.assemble_matrix(a[0][4])
+        # A04 = fem.petsc.assemble_matrix(self.a[0][4])
         # breakpoint()
-
-        A = fem.petsc.assemble_matrix(a)
+        A = fem.petsc.assemble_matrix(self.a)
         A.assemble()
         b = fem.petsc.assemble_vector(L)
         b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
         if self.cfg.lm_spaces:
-            self.A = A
-            self.b = b
             return (A, b)
         else:
             if self._network_mesh.mesh.comm.size > 1:
@@ -350,8 +344,6 @@ class Assembler:
             A_.assemble()
             b_.assemble()
 
-            self.A = A_
-            self.b = b_
             return (A_, b_)
 
     def bilinear_forms(self):
@@ -377,21 +369,3 @@ class Assembler:
         if i > len(L):
             logging.error("Linear form L[" + str(i) + "] out of range")
         return L[i]
-
-    def assembled_matrix(self):
-        if self.A is None:
-            logging.error("Matrix has not been assemble. Need to call assemble()")
-        else:
-            return self.A
-
-    def assembled_rhs(self):
-        if self.b is None:
-            logging.error("RHS has not been assemble. Need to call assemble()")
-        else:
-            return self.b
-
-    def __del__(self):
-        if self.A is not None:
-            self.A.destroy()
-        if self.b is not None:
-            self.b.destroy()

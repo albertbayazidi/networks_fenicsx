@@ -27,10 +27,7 @@ class Solver:
 
         self.assembler = assembler
         self.cfg = config
-
-        if self.assembler is not None:
-            self.A = assembler.assembled_matrix()
-            self.b = assembler.assembled_rhs()
+        (self.A, self.b) = self.assembler.assemble()
 
     @property
     def ksp(self):
@@ -51,7 +48,6 @@ class Solver:
         self.ksp.solve(self.b, x)
 
         return x
-
 
     def __del__(self):
         if self._ksp is not None:
