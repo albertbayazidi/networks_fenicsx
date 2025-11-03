@@ -1,4 +1,3 @@
-
 """
 This file is based on the graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks - forked on August 2022
 Copyright (C) 2022-2023 by Ingeborg Gjerde
@@ -15,7 +14,6 @@ from typing import Dict, List
 from mpi4py import MPI
 
 from networks_fenicsx import config
-
 
 
 def timeit(func):
@@ -38,7 +36,9 @@ def timeit(func):
         # Write to profiling file
         if MPI.COMM_WORLD.rank == 0:
             avg_time = sum_time / MPI.COMM_WORLD.size
-            avg_time_info = f"{func.__name__}: {avg_time:.5e} s \n"  # sum_time / MPI.COMM_WORLD.size
+            avg_time_info = (
+                f"{func.__name__}: {avg_time:.5e} s \n"  # sum_time / MPI.COMM_WORLD.size
+            )
             p = Path(args[0].cfg.outdir)
             p.mkdir(exist_ok=True)
             with (p / "profiling.txt").open("a") as f:
@@ -83,8 +83,7 @@ def timing_table(config: config.Config):
         import pandas as pd
 
         if MPI.COMM_WORLD.rank == 0:
-            breakpoint()
-
+            print(t_dict)
             df = pd.DataFrame(
                 {
                     "n": t_dict["n"],
@@ -95,13 +94,9 @@ def timing_table(config: config.Config):
             )
 
             if config.lm_space:
-                df.to_csv(
-                    config.outdir / "timings_lm_space.txt", sep="\t", index=False
-                )
+                df.to_csv(config.outdir / "timings_lm_space.txt", sep="\t", index=False)
             else:
-                df.to_csv(
-                    config.outdir / "timings_jump_vectors.txt", sep="\t", index=False
-                )
+                df.to_csv(config.outdir / "timings_jump_vectors.txt", sep="\t", index=False)
     except ModuleNotFoundError:
         raise ModuleNotFoundError("Pandas is required to create timing tables.")
         # if config.lm_space:

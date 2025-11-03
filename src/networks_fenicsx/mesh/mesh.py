@@ -37,7 +37,7 @@ class NetworkMesh:
 
     # Graph properties
     _geom_dim: int
-    _num_colors: int
+    _num_edge_colors: int
     _bifurcation_in_color: dict[int, list[int]]
     _bifurcation_out_color: dict[int, list[int]]
 
@@ -73,7 +73,7 @@ class NetworkMesh:
         if self._lm_map is None:
             raise RuntimeError("Lagrange multiplier entity map has not been created.")
         return self._lm_map
-  
+
     @property
     def comm(self):
         return self.mesh.comm
@@ -88,7 +88,7 @@ class NetworkMesh:
         assert self._msh is not None
         assert self._facet_markers is not None
         bifurcation_indices = self._facet_markers.indices[
-            np.isin(self._facet_markers.values, self._bifurcation_values)
+            np.isin(self._facet_markers.values, self.bifurcation_values)
         ]
         self._lm_mesh, self._lm_map = mesh.create_submesh(
             self.mesh,
@@ -119,19 +119,23 @@ class NetworkMesh:
             :, None
         ]
 
-
         graph_nodes, num_connections = np.unique(cells_array.flatten(), return_counts=True)
-        self._bifurcation_values = np.flatnonzero(num_connections > 1)
-        self._boundary_values = np.flatnonzero(num_connections == 1)
 
-
-        # Create mesh segments
+        # Graph color graph edges
         if self.cfg.graph_coloring:
             undirected_edge_graph = nx.line_graph(graph.to_undirected())
             edge_coloring = nx.coloring.greedy_color(undirected_edge_graph)
+            node_coloring = nx.coloring.greedy_color(graph.to_undirected())
         else:
             edge_coloring = {(int(cell[0]), int(cell[1])): i for i, cell in enumerate(cells_array)}
-        self._num_colors = len(set(edge_coloring.values()))
+            node_coloring = {i: i for i in range(graph_nodes.shape[0])}
+
+        self._num_edge_colors = len(set(edge_coloring.values()))
+
+        self._bifurcation_values = np.flatnonzero(num_connections > 1)
+        self._boundary_values = np.flatnonzero(num_connections == 1)
+
+        self._bifurcation_colors = [node_coloring[bi] for bi in self._bifurcation_values]
 
         # Create lookup of in and out colors for each bifurcation
         self._bifurcation_in_color = {}
@@ -142,16 +146,15 @@ class NetworkMesh:
             in_edges = graph.in_edges(bifurcation)
             self._bifurcation_in_color[int(bifurcation)] = []
             for edge in in_edges:
-                self._bifurcation_in_color[int(bifurcation)].append(
-                    edge_coloring[edge]                )
+                self._bifurcation_in_color[int(bifurcation)].append(edge_coloring[edge])
             out_edges = graph.out_edges(bifurcation)
             self._bifurcation_out_color[int(bifurcation)] = []
             for edge in out_edges:
-                self._bifurcation_out_color[int(bifurcation)].append(
-                    edge_coloring[edge]
-                )
+                self._bifurcation_out_color[int(bifurcation)].append(edge_coloring[edge])
 
         # Map boundary_values to inlet and outlet data from graph
+        # Each boundary has a unique integer (ignore graph node coloring)
+
         for boundary in self._boundary_values:
             in_edges = graph.in_edges(boundary)
             out_edges = graph.out_edges(boundary)
@@ -162,8 +165,6 @@ class NetworkMesh:
                 self._boundary_out_nodes.append(int(boundary))
         self._boundary_in_nodes = tuple(self._boundary_in_nodes)
         self._boundary_out_nodes = tuple(self._boundary_out_nodes)
-
-    
         if MPI.COMM_WORLD.rank == 0:
             mesh_nodes = vertex_coords.copy()
             cells = []
@@ -194,7 +195,11 @@ class NetworkMesh:
                         ]
                     )
                     cell_markers.extend(
-                        np.full(internal_line_coords.shape[0] + 1, edge_coloring[(segment[0], segment[1])], dtype=np.int32)
+                        np.full(
+                            internal_line_coords.shape[0] + 1,
+                            edge_coloring[(segment[0], segment[1])],
+                            dtype=np.int32,
+                        )
                     )
             cells = np.vstack(cells).astype(np.int64)
             cell_markers = np.array(cell_markers, dtype=np.int32)
@@ -267,7 +272,7 @@ class NetworkMesh:
         self._edge_meshes = []
         self._edge_entity_maps = []
         self._submesh_facet_markers = []
-        for i in range(self._num_colors):
+        for i in range(self._num_edge_colors):
             edge_subdomain = self.subdomains.indices[self.subdomains.values == i]
             edge_mesh, edge_map, vertex_map = mesh.create_submesh(
                 self.mesh, self.mesh.topology.dim, edge_subdomain
