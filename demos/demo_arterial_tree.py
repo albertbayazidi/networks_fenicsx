@@ -1,8 +1,5 @@
-import os
 import numpy as np
 from pathlib import Path
-from mpi4py import MPI
-import networkx
 from networks_fenicsx import NetworkMesh
 from networks_fenicsx.mesh import arterial_tree
 from networks_fenicsx.solver import assembly, solver
