@@ -7,11 +7,13 @@ from networks_fenicsx.config import Config
 
 # from networks_fenicsx.utils.timers import timing_dict, timing_table
 from networks_fenicsx.utils.post_processing import export  # , perf_plot
+import networkx as ntx
 
 cfg = Config()
 cfg.export = True
 cfg.lm_space = True
-cfg.graph_coloring = False
+cfg.graph_coloring = True
+cfg.color_strategy = ntx.coloring.strategy_largest_first
 if cfg.lm_space:
     cfg.outdir = "demo_arterial_tree_lm"
 else:

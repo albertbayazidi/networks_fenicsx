@@ -1,7 +1,10 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from mpi4py import MPI
+import typing
 import shutil
+import networkx as ntx
 
 
 @dataclass
@@ -14,7 +17,9 @@ class Config:
     export: bool = False
     clean: bool = True
     graph_coloring: bool = False
-    color_strategy: str = "largest_first"
+    color_strategy: str | typing.Callable[[ntx.Graph, dict[int, int]], Iterable[int]] = (
+        "largest_first"  # Coloring strategy based to pass to {py:funx}`networkx.coloring.greedy_color`
+    )
 
     def __post_init__(self):
         if self.graph_coloring and not self.lm_space:
