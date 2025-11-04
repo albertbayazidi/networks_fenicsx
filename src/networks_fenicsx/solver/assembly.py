@@ -42,12 +42,59 @@ def flux_term(
     return q * ds
 
 
+@timeit
+def compute_integration_data(
+    network_mesh: mesh.NetworkMesh,
+) -> tuple[dict[int, npt.NDArray[np.int32]], dict[int, npt.NDArray[np.int32]]]:
+    """Given a network mesh, compute integration entities for the "parent" network mesh
+    for each bifuraction in the mesh.
+
+    Args:
+        network_mesh: The network mesh
+
+    Returns:
+        A tuple `(in_entities, out_entities) mapping integration entities on each edge of the network
+        (marked by color) to its integration entities on the parent mesh.
+
+    """
+    # Accumulate integration data for all in-edges on the same submesh.
+    in_flux_entities: dict[int, npt.NDArray[np.int32]] = {
+        i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
+    }
+    out_flux_entities: dict[int, npt.NDArray[np.int32]] = {
+        i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
+    }
+    for bifurcation in network_mesh.bifurcation_values:
+        in_colors = (network_mesh.in_edges(bifurcation), in_flux_entities)
+        out_colors = (network_mesh.out_edges(bifurcation), out_flux_entities)
+        for colors, idata in [in_colors, out_colors]:
+            for color in colors:
+                sm = network_mesh.submeshes[color]
+                smfm = network_mesh.submesh_facet_markers[color]
+                sm.topology.create_connectivity(sm.topology.dim - 1, sm.topology.dim)
+
+                integration_entities = fem.compute_integration_domains(
+                    fem.IntegralType.exterior_facet, sm.topology, smfm.find(bifurcation)
+                ).reshape(-1, 2)
+                parent_to_sub = network_mesh.entity_maps[color].sub_topology_to_topology(
+                    integration_entities[:, 0].copy(), inverse=False
+                )
+
+                integration_entities[:, 0] = parent_to_sub
+                idata[color] = np.concatenate([idata[color], integration_entities.flatten()])
+    return in_flux_entities, out_flux_entities
+
+
 class Assembler:
     _network_mesh: mesh.NetworkMesh
     _flux_spaces: list[fem.FunctionSpace]
     _pressure_space: fem.FunctionSpace
     _lm_space: fem.FunctionSpace
     _cfg = config.Config
+    _in_idx: int  # Starting point for each influx interior bifurcation integral
+    _out_idx: int  # Starting point for each outflux interior bifurcation integral
+    _in_keys: tuple[int]  # Set of unique markers for all influx conditions
+    _out_keys: tuple[int]  # Set of unique markers for all outflux conditions
 
     def __init__(self, config: config.Config, mesh: mesh.NetworkMesh):
         self._network_mesh = mesh
@@ -90,6 +137,18 @@ class Assembler:
         num_blocks = num_qs + int(self.cfg.lm_space) + 1
         self.a = [[None] * num_blocks for _ in range(num_blocks)]
         self.L = [None] * num_blocks
+
+        # Compute integration data for network mesh
+        self._integration_data = []
+        self._in_idx = 212
+        in_flux_entities, out_flux_entities = compute_integration_data(self._network_mesh)
+        self._in_keys = tuple(in_flux_entities.keys())
+        self._out_keys = tuple(out_flux_entities.keys())
+        for color in self._in_keys:
+            self._integration_data.append((self._in_idx + color, in_flux_entities[color]))
+        self._out_idx = self._in_idx + len(out_flux_entities)
+        for color in self._out_keys:
+            self._integration_data.append((self._out_idx + color, out_flux_entities[color]))
 
     @property
     def cfg(self):
@@ -173,13 +232,12 @@ class Assembler:
 
         # Assemble edge contributions to a and L
         num_qs = len(self._network_mesh.submeshes)
-        import time
-
-        start = time.perf_counter()
-
         P1_e = fem.functionspace(network_mesh.mesh, ("Lagrange", 1))
         p_bc = fem.Function(P1_e)
         p_bc.interpolate(p_bc_ex.eval)
+        import time
+
+        start = time.perf_counter()
         for i, (submesh, entity_map, facet_marker) in enumerate(
             zip(
                 network_mesh.submeshes,
@@ -187,7 +245,6 @@ class Assembler:
                 network_mesh.submesh_facet_markers,
             )
         ):
-            start_i = time.perf_counter()
             dx_edge = ufl.Measure("dx", domain=submesh)
             ds_edge = ufl.Measure("ds", domain=submesh, subdomain_data=facet_marker)
 
@@ -208,22 +265,18 @@ class Assembler:
                 jit_options=jit_options,
                 form_compiler_options=form_compiler_options,
             )
-            end_i = time.perf_counter()
 
-            # NOTE: Reduce number of unique nodes here.
-            # In bc should have one set of nodes, out bc another.
             # Add all boundary contributions
             self.L[i] = fem.form(
-                p_bc * vs[i] * ds_edge(network_mesh.in_nodes)
-                - p_bc * vs[i] * ds_edge(network_mesh.out_nodes),
+                p_bc * vs[i] * ds_edge(network_mesh.in_marker)
+                - p_bc * vs[i] * ds_edge(network_mesh.out_marker),
                 jit_options=jit_options,
                 form_compiler_options=form_compiler_options,
                 entity_maps=[entity_map],
             )
-            end2_i = time.perf_counter()
-            print("Ii", i, end2_i - end_i)
         end = time.perf_counter()
-        print(end - start)
+        print(f"Traditional {end - start}")
+        start2 = time.perf_counter()
         if self.cfg.lm_space:
             # Multiplier mesh and flux share common parent mesh.
             # We create unique integration entities for each in and out branch
@@ -234,50 +287,16 @@ class Assembler:
                 self.a[edge][-1] = ufl.ZeroBaseForm((lmbda, vs[edge]))
                 self.a[-1][edge] = ufl.ZeroBaseForm((mu, qs[edge]))
 
-            # Accumulate integration data for all in-edges on the same submesh.
-            in_flux_entities: dict[int, npt.NDArray[np.int32]] = {
-                i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
-            }
-            out_flux_entities: dict[int, npt.NDArray[np.int32]] = {
-                i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
-            }
-            for bifurcation in self._network_mesh.bifurcation_values:
-                in_colors = (self._network_mesh.in_edges(bifurcation), in_flux_entities)
-                out_colors = (self._network_mesh.out_edges(bifurcation), out_flux_entities)
-                for colors, idata in [in_colors, out_colors]:
-                    for color in colors:
-                        sm = self._network_mesh.submeshes[color]
-                        smfm = self._network_mesh.submesh_facet_markers[color]
-                        sm.topology.create_connectivity(sm.topology.dim - 1, sm.topology.dim)
+            ds = ufl.Measure(
+                "ds", domain=self._network_mesh.mesh, subdomain_data=self._integration_data
+            )
+            for color in self._in_keys:
+                self.a[-1][color] += mu * qs[color] * ds(self._in_idx + color)
+                self.a[color][-1] += lmbda * vs[color] * ds(self._in_idx + color)
 
-                        integration_entities = fem.compute_integration_domains(
-                            fem.IntegralType.exterior_facet, sm.topology, smfm.find(bifurcation)
-                        ).reshape(-1, 2)
-                        parent_to_sub = self._network_mesh.entity_maps[
-                            color
-                        ].sub_topology_to_topology(integration_entities[:, 0].copy(), inverse=False)
-
-                        integration_entities[:, 0] = parent_to_sub
-                        idata[color] = np.concatenate(
-                            [idata[color], integration_entities.flatten()]
-                        )
-
-            integration_data = []
-            in_idx = 212
-            for color, idata in in_flux_entities.items():
-                integration_data.append((in_idx + color, idata))
-            out_idx = in_idx + len(out_flux_entities)
-            for color, idata in out_flux_entities.items():
-                integration_data.append((out_idx + color, idata))
-            ds = ufl.Measure("ds", domain=self._network_mesh.mesh, subdomain_data=integration_data)
-
-            for color in in_flux_entities.keys():
-                self.a[-1][color] += mu * qs[color] * ds(in_idx + color)
-                self.a[color][-1] += lmbda * vs[color] * ds(in_idx + color)
-
-            for color in out_flux_entities.keys():
-                self.a[-1][color] -= mu * qs[color] * ds(out_idx + color)
-                self.a[color][-1] -= lmbda * vs[color] * ds(out_idx + color)
+            for color in self._out_keys:
+                self.a[-1][color] -= mu * qs[color] * ds(self._out_idx + color)
+                self.a[color][-1] -= lmbda * vs[color] * ds(self._out_idx + color)
 
             self.L[-1] = fem.form(ufl.ZeroBaseForm((mu,)))
             entity_maps = [self._network_mesh.lm_map, *self._network_mesh.entity_maps]
@@ -294,6 +313,8 @@ class Assembler:
                     jit_options=jit_options,
                     form_compiler_options=form_compiler_options,
                 )
+        end2 = time.perf_counter()
+        print(f"LM: {end2 - start2}")
         # Add zero to uninitialized diagonal blocks (needed by petsc)
         self.a[num_qs][num_qs] = fem.form(
             ufl.ZeroBaseForm((p, phi)),

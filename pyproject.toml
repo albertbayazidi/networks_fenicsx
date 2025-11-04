@@ -8,7 +8,7 @@ description = "Solving Stokes on 1D networks with FEniCSx"
 authors = [{ name = "Cécile Daversin-Catty", email = "cecile@simula.no" }]
 license = { file = "LICENSE" }
 readme = "README.md"
-dependencies = ["fenics-dolfinx>=0.10.0", "networkx", "scifem"]
+dependencies = ["fenics-dolfinx>=0.10.0", "networkx"]
 
 [project.scripts]
 networks_fenicsx = "networks_fenicsx.cli:main"
@@ -96,7 +96,6 @@ convention = "google"
 [tool.ruff.lint.isort]
 known-first-party = ["networks_fenicsx"]
 known-third-party = [
-    "scifem",
     "basix",
     "dolfinx",
     "ffcx",

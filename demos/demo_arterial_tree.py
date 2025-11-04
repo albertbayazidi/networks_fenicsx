@@ -37,7 +37,7 @@ p.mkdir(exist_ok=True)
 
 n = 4
 
-G = arterial_tree.make_arterial_tree(N=n, directions=[1, 1, 1, 1])
+G = arterial_tree.make_arterial_tree(N=n, directions=[1, 1, 1, 1, 1, 1, 1, 1])
 
 
 network_mesh = NetworkMesh(G, cfg)

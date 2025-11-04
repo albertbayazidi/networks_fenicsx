@@ -15,7 +15,6 @@ import basix.ufl
 import numpy.typing as npt
 from mpi4py import MPI
 from dolfinx import fem, io as _io, mesh, graph as _graph
-import scifem
 import ufl
 
 from networks_fenicsx.utils.timers import timeit
@@ -108,7 +107,9 @@ class NetworkMesh:
             This function attaches data to `self.mesh`, `self.subdomains` and
             `self.boundaries`.
         """
+        import time
 
+        start = time.perf_counter()
         # Extract all the data required form the graph
         self._geom_dim = len(graph.nodes[1]["pos"])
 
@@ -140,8 +141,6 @@ class NetworkMesh:
         # Create lookup of in and out colors for each bifurcation
         self._bifurcation_in_color = {}
         self._bifurcation_out_color = {}
-        self._boundary_in_nodes = []
-        self._boundary_out_nodes = []
         for bifurcation in self._bifurcation_values:
             in_edges = graph.in_edges(bifurcation)
             self._bifurcation_in_color[int(bifurcation)] = []
@@ -153,27 +152,29 @@ class NetworkMesh:
                 self._bifurcation_out_color[int(bifurcation)].append(edge_coloring[edge])
 
         # Map boundary_values to inlet and outlet data from graph
-        # Each boundary has a unique integer (ignore graph node coloring)
-
+        boundary_in_nodes = []
+        boundary_out_nodes = []
         for boundary in self._boundary_values:
             in_edges = graph.in_edges(boundary)
             out_edges = graph.out_edges(boundary)
             assert len(in_edges) + len(out_edges) == 1, "Boundary node with multiple edges"
             if len(in_edges) == 1:
-                self._boundary_in_nodes.append(int(boundary))
+                boundary_in_nodes.append(int(boundary))
             else:
-                self._boundary_out_nodes.append(int(boundary))
-        self._boundary_in_nodes = tuple(self._boundary_in_nodes)
-        self._boundary_out_nodes = tuple(self._boundary_out_nodes)
+                boundary_out_nodes.append(int(boundary))
+        end = time.perf_counter()
+        print(end - start, "generate mesh data")
+        # Generate mesh
         if MPI.COMM_WORLD.rank == 0:
             mesh_nodes = vertex_coords.copy()
             cells = []
             cell_markers = []
-            for i, segment in enumerate(cells_array):
-                if len(line_weights) == 0:
+            if len(line_weights) == 0:
+                for segment in cells_array:
                     cells.append([segment[0], segment[1]])
                     cell_markers.append(edge_coloring[(segment[0], segment[1])])
-                else:
+            else:
+                for segment in cells_array:
                     start_coord_pos = mesh_nodes.shape[0]
                     start = vertex_coords[segment[0]]
                     end = vertex_coords[segment[1]]
@@ -232,9 +233,13 @@ class NetworkMesh:
             local_values,
         )
 
+        self._in_marker = 83
+        self._out_marker = 72
         if MPI.COMM_WORLD.rank == 0:
             lv = graph_nodes.astype(np.int64).reshape((-1, 1))
             lvv = np.arange(len(graph_nodes), dtype=np.int32)
+            lvv[boundary_in_nodes] = self._in_marker
+            lvv[boundary_out_nodes] = self._out_marker
         else:
             lv = np.empty((0, 1), dtype=np.int64)
             lvv = np.empty((0,), dtype=np.int32)
@@ -256,12 +261,12 @@ class NetworkMesh:
                 file.write_meshtags(self.boundaries, self.mesh.geometry)
 
     @property
-    def in_nodes(self) -> tuple[int, ...]:
-        return self._boundary_in_nodes
+    def in_marker(self) -> int:
+        return self._in_marker
 
     @property
-    def out_nodes(self) -> tuple[int, ...]:
-        return self._boundary_out_nodes
+    def out_marker(self) -> int:
+        return self._out_marker
 
     @timeit
     def _build_network_submeshes(self):
@@ -272,6 +277,10 @@ class NetworkMesh:
         self._edge_meshes = []
         self._edge_entity_maps = []
         self._submesh_facet_markers = []
+        parent_vertex_map = self.mesh.topology.index_map(0)
+        num_vertices_parent = parent_vertex_map.size_local + parent_vertex_map.num_ghosts
+        parent_vertex_marker = np.full(num_vertices_parent, -1, dtype=np.int32)
+        parent_vertex_marker[self._facet_markers.indices] = self._facet_markers.values
         for i in range(self._num_edge_colors):
             edge_subdomain = self.subdomains.indices[self.subdomains.values == i]
             edge_mesh, edge_map, vertex_map = mesh.create_submesh(
@@ -279,10 +288,18 @@ class NetworkMesh:
             )[0:3]
             self._edge_meshes.append(edge_mesh)
             self._edge_entity_maps.append(edge_map)
+            num_submesh_vertices = (
+                edge_mesh.topology.index_map(0).size_local
+                + edge_mesh.topology.index_map(0).num_ghosts
+            )
+            parent_vertices = vertex_map.sub_topology_to_topology(
+                np.arange(num_submesh_vertices, dtype=np.int32), inverse=False
+            )
+            sub_topology_values = parent_vertex_marker[parent_vertices]
+            marked_vertices = np.flatnonzero(sub_topology_values >= 0)
+            marked_values = sub_topology_values[sub_topology_values >= 0]
             self._submesh_facet_markers.append(
-                scifem.transfer_meshtags_to_submesh(
-                    self._facet_markers, edge_mesh, vertex_map, edge_map
-                )[0]
+                mesh.meshtags(edge_mesh, 0, marked_vertices, marked_values)
             )
 
     @property

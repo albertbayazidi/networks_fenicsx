@@ -1,3 +1,4 @@
+import time
 import numpy as np
 from pathlib import Path
 from mpi4py import MPI
@@ -26,7 +27,7 @@ class p_bc_expr:
 
 
 # One element per segment
-cfg.lcar = 2.0
+cfg.lcar = 2
 
 # Cleaning directory only once
 cfg.clean_dir()
@@ -38,16 +39,21 @@ if cache_dir.exists():
     shutil.rmtree(cache_dir, ignore_errors=True)
 
 jit_options = {"cache_dir": cache_dir}
-ns = [15]
+ns = [16]
 for n in ns:
     if MPI.COMM_WORLD.rank == 0:
         with (cfg.outdir / "profiling.txt").open("a") as f:
             f.write("n: " + str(n) + "\n")
 
     # Create tree
+    start = time.perf_counter()
     G = mesh_generation.make_tree(n=n, H=n, W=n)
+    end = time.perf_counter()
+    print(f"NETWORKx time: {end - start}")
+    start2 = time.perf_counter()
     network_mesh = NetworkMesh(G, cfg)
-
+    end2 = time.perf_counter()
+    print(f"generate mesh: {end2 - start2}")
     assembler = assembly.Assembler(cfg, network_mesh)
     # Compute forms
     assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
