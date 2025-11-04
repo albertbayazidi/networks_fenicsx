@@ -23,6 +23,22 @@ from networks_fenicsx import config
 __all__ = ["NetworkMesh", "compute_tangent"]
 
 
+def color_graph(
+    graph: nx.DiGraph, use_coloring: bool
+) -> tuple[dict[int:int], dict[tuple[int, int], int]]:
+    """
+    Color the nodes and edges of a graph.
+    """
+    if use_coloring:
+        undirected_edge_graph = nx.line_graph(graph.to_undirected())
+        edge_coloring = nx.coloring.greedy_color(undirected_edge_graph)
+        node_coloring = nx.coloring.greedy_color(graph.to_undirected())
+    else:
+        edge_coloring = {edge: i for i, edge in enumerate(graph.edges)}
+        node_coloring = {i: i for i in range(graph.number_of_nodes())}
+    return node_coloring, edge_coloring
+
+
 class NetworkMesh:
     """A representation of a Networkx graph in DOLFINx.
 
@@ -96,6 +112,10 @@ class NetworkMesh:
         )[:2]
 
     @timeit
+    def _color_graph(self, graph: nx.DiGraph) -> tuple[dict[int, int], dict[tuple[int, int], int]]:
+        return color_graph(graph, self.cfg.graph_coloring)
+
+    @timeit
     def _build_mesh(self, graph: nx.DiGraph):
         """Convert the networkx graph into a {py:class}`dolfinx.mesh.Mesh`.
 
@@ -107,9 +127,7 @@ class NetworkMesh:
             This function attaches data to `self.mesh`, `self.subdomains` and
             `self.boundaries`.
         """
-        import time
 
-        start = time.perf_counter()
         # Extract all the data required form the graph
         self._geom_dim = len(graph.nodes[1]["pos"])
 
@@ -122,17 +140,9 @@ class NetworkMesh:
 
         graph_nodes, num_connections = np.unique(cells_array.flatten(), return_counts=True)
 
-        # Graph color graph edges
-        if self.cfg.graph_coloring:
-            undirected_edge_graph = nx.line_graph(graph.to_undirected())
-            edge_coloring = nx.coloring.greedy_color(undirected_edge_graph)
-            node_coloring = nx.coloring.greedy_color(graph.to_undirected())
-        else:
-            edge_coloring = {(int(cell[0]), int(cell[1])): i for i, cell in enumerate(cells_array)}
-            node_coloring = {i: i for i in range(graph_nodes.shape[0])}
+        node_coloring, edge_coloring = self._color_graph(graph)
 
         self._num_edge_colors = len(set(edge_coloring.values()))
-
         self._bifurcation_values = np.flatnonzero(num_connections > 1)
         self._boundary_values = np.flatnonzero(num_connections == 1)
 
@@ -162,8 +172,7 @@ class NetworkMesh:
                 boundary_in_nodes.append(int(boundary))
             else:
                 boundary_out_nodes.append(int(boundary))
-        end = time.perf_counter()
-        print(end - start, "generate mesh data")
+
         # Generate mesh
         if MPI.COMM_WORLD.rank == 0:
             mesh_nodes = vertex_coords.copy()
@@ -219,7 +228,6 @@ class NetworkMesh:
             max_facet_to_cell_links=np.max(num_connections),
         )
         self._msh = graph_mesh
-
         local_entities, local_values = _io.distribute_entity_data(
             self.mesh,
             self.mesh.topology.dim,

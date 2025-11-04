@@ -57,31 +57,52 @@ def compute_integration_data(
         (marked by color) to its integration entities on the parent mesh.
 
     """
-    # Accumulate integration data for all in-edges on the same submesh.
-    in_flux_entities: dict[int, npt.NDArray[np.int32]] = {
-        i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
+
+    # Pack all bifurcation in and out fluxes per colored edge in graph
+    influx_color_to_bifurcations = {
+        int(color): [] for color in range(network_mesh._num_edge_colors)
     }
-    out_flux_entities: dict[int, npt.NDArray[np.int32]] = {
-        i: np.empty(0, dtype=np.int32) for i in range(network_mesh._num_edge_colors)
+    outflux_color_to_bifurcations = {
+        int(color): [] for color in range(network_mesh._num_edge_colors)
     }
     for bifurcation in network_mesh.bifurcation_values:
-        in_colors = (network_mesh.in_edges(bifurcation), in_flux_entities)
-        out_colors = (network_mesh.out_edges(bifurcation), out_flux_entities)
-        for colors, idata in [in_colors, out_colors]:
-            for color in colors:
-                sm = network_mesh.submeshes[color]
-                smfm = network_mesh.submesh_facet_markers[color]
-                sm.topology.create_connectivity(sm.topology.dim - 1, sm.topology.dim)
+        for color in network_mesh.in_edges(bifurcation):
+            influx_color_to_bifurcations[color].append(int(bifurcation))
+        for color in network_mesh.out_edges(bifurcation):
+            outflux_color_to_bifurcations[color].append(int(bifurcation))
 
-                integration_entities = fem.compute_integration_domains(
-                    fem.IntegralType.exterior_facet, sm.topology, smfm.find(bifurcation)
-                ).reshape(-1, 2)
-                parent_to_sub = network_mesh.entity_maps[color].sub_topology_to_topology(
-                    integration_entities[:, 0].copy(), inverse=False
-                )
+    # Accumulate integration data for all in-edges on the same submesh.
+    in_flux_entities: dict[int, npt.NDArray[np.int32]] = {}
+    out_flux_entities: dict[int, npt.NDArray[np.int32]] = {}
 
-                integration_entities[:, 0] = parent_to_sub
-                idata[color] = np.concatenate([idata[color], integration_entities.flatten()])
+    for color in range(network_mesh._num_edge_colors):
+        sm = network_mesh.submeshes[color]
+        smfm = network_mesh.submesh_facet_markers[color]
+        sm.topology.create_connectivity(sm.topology.dim - 1, sm.topology.dim)
+
+        # Compute influx entities
+        submesh_influx_entities = fem.compute_integration_domains(
+            fem.IntegralType.exterior_facet,
+            sm.topology,
+            smfm.indices[np.isin(smfm.values, influx_color_to_bifurcations[color])],
+        ).reshape(-1, 2)
+        parent_to_sub = network_mesh.entity_maps[color].sub_topology_to_topology(
+            submesh_influx_entities[:, 0].copy(), inverse=False
+        )
+        submesh_influx_entities[:, 0] = parent_to_sub
+        in_flux_entities[color] = submesh_influx_entities.flatten()
+
+        # Compute influx entities
+        submesh_outflux_entities = fem.compute_integration_domains(
+            fem.IntegralType.exterior_facet,
+            sm.topology,
+            smfm.indices[np.isin(smfm.values, outflux_color_to_bifurcations[color])],
+        ).reshape(-1, 2)
+        parent_to_sub = network_mesh.entity_maps[color].sub_topology_to_topology(
+            submesh_outflux_entities[:, 0].copy(), inverse=False
+        )
+        submesh_outflux_entities[:, 0] = parent_to_sub
+        out_flux_entities[color] = submesh_outflux_entities.flatten()
     return in_flux_entities, out_flux_entities
 
 
