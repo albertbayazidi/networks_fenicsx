@@ -5,5 +5,5 @@ __email__ = "cecile@simula.no"
 __version__ = "0.1.0"
 
 from .mesh.mesh import NetworkMesh
-
-__all__ = ["NetworkMesh"]
+from .solver.assembly import HydraulicNetworkAssembler
+__all__ = ["HydraulicNetworkAssembler", "NetworkMesh"]

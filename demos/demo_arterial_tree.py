@@ -1,8 +1,8 @@
 import numpy as np
 from pathlib import Path
-from networks_fenicsx import NetworkMesh
+from networks_fenicsx import NetworkMesh, HydraulicNetworkAssembler
 from networks_fenicsx.mesh import arterial_tree
-from networks_fenicsx.solver import assembly, solver
+from networks_fenicsx.solver import solver
 from networks_fenicsx.config import Config
 
 # from networks_fenicsx.utils.timers import timing_dict, timing_table
@@ -42,7 +42,7 @@ G = arterial_tree.make_arterial_tree(
 
 
 network_mesh = NetworkMesh(G, cfg)
-assembler = assembly.Assembler(cfg, network_mesh)
+assembler = HydraulicNetworkAssembler(cfg, network_mesh)
 # Compute forms
 assembler.compute_forms(p_bc_ex=p_bc_expr())
 # Solve

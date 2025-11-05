@@ -1,12 +1,11 @@
+# Copyright (C) Simula Research Laboratory and Jørgen S. Dokken
+# SPDX-License-Identifier:    LGPL-3.0-or-later
 """
-Interface for converting a networkx graph into a {py:class}`dolfinx.mesh.Mesh`.
+Interface for converting a :py:class:`directional networkx graph<networkx.DiGraph>`
+into a :py:class:`dolfinx.mesh.Mesh`.
 
-This idea stems from the Graphnics project (https://arxiv.org/abs/2212.02916), https://github.com/IngeborgGjerde/fenics-networks
-by Ingeborg Gjerde.
-
-Modified by Cécile Daversin-Catty - 2023
-Modified by Joseph P. Dean - 2023
-Modified by Jørgen S. Dokken - 2025
+This idea stems from the Graphnics project (https://doi.org/10.48550/arXiv.2212.02916),
+https://github.com/IngeborgGjerde/fenics-networks by Ingeborg Gjerde.
 """
 
 import networkx as nx
@@ -39,11 +38,15 @@ def color_graph(
 
 
 class NetworkMesh:
-    """A representation of a Networkx graph in DOLFINx.
+    """A representation of a :py:class:`Directional Networkx<networkx.DiGraph>` graph in
+    :py:mod:`DOLFINx<dolfinx>`.
 
-    Stores the resulting mesh, subdomains, and facet markers for bifurcations and boundary nodes.
-    Has a globally oriented tangent vector field.
-    Has a submesh for each edge in the Networkx graph.
+    Stores the resulting :py:class:`mesh<dolfinx.mesh.Mesh>`,
+    :py:class:`subdomains<dolfinx.mesh.MeshTags>`,
+    and :py:class:`facet markers<dolfinx.mesh.MeshTags>` for bifurcations and boundary nodes.
+    Has a globally oriented tangent vector field :py:meth:`tangent<NetworkMesh.tangent>`.
+    Has a :py:class:`submesh<dolfinx.mesh.Mesh>` for each edge in the
+    :py:class:`Networkx graph<networkx.DiGraph>`.
     """
 
     # Configuration
@@ -78,27 +81,37 @@ class NetworkMesh:
 
     @property
     def lm_mesh(self) -> mesh.Mesh:
+        """Lagrange multiplier mesh, a point-cloud mesh including each bifurcation.
+        """
         if self._lm_mesh is None:
             raise RuntimeError("Lagrange multiplier submesh has not been created.")
         return self._lm_mesh
 
     @property
     def lm_map(self) -> mesh.EntityMap:
+        """Entity map for the :py:meth:`Lagrange multiplier mesh<NetworkMesh.lm_mesh>`"""
         if self._lm_map is None:
             raise RuntimeError("Lagrange multiplier entity map has not been created.")
         return self._lm_map
 
     @property
-    def comm(self):
+    def comm(self)-> MPI.Comm:
+        """MPI-communicator of the network mesh"""
         return self.mesh.comm
 
     @property
     def cfg(self) -> config.Config:
+        """The configuration setup"""
         return self._cfg
 
     @timeit
     def _create_lm_submesh(self):
-        """Create a submesh for the Lagrange multipliers at the bifurcations."""
+        """Create a submesh for the Lagrange multipliers at the bifurcations.
+        
+        Note:
+            This is an internal class function, that is not supposed to be called by
+            users.
+        """
         assert self._msh is not None
         assert self._facet_markers is not None
         bifurcation_indices = self._facet_markers.indices[
@@ -109,6 +122,9 @@ class NetworkMesh:
             self.mesh.topology.dim - 1,
             bifurcation_indices,
         )[:2]
+        # Workaround until: https://github.com/FEniCS/dolfinx/pull/3974 is merged
+        self._lm_mesh.topology.create_entity_permutations()
+
 
 
     @timeit

@@ -9,14 +9,13 @@ Modified by Joseph P. Dean - 2023
 Modified by Jørgen S. Dokken - 2025
 """
 
-from operator import add
+from petsc4py import PETSc
+from typing import Protocol
 from dolfinx import fem, mesh as _mesh
 import ufl
 
-
-# from mpi4py import MPI
+import typing
 import basix
-from petsc4py import PETSc
 import logging
 import numpy as np
 import numpy.typing as npt
@@ -24,8 +23,12 @@ from networks_fenicsx.mesh import mesh
 from networks_fenicsx.utils.timers import timeit
 from networks_fenicsx import config
 
-__all__ = ["Assembler"]
+__all__ = ["HydraulicNetworkAssembler", "PressureFunction"]
 
+
+class PressureFunction(Protocol):
+    def eval(x: npt.NDArray[np.floating])-> npt.NDArray[np.inexact]:
+        ...
 
 def flux_term(
     q: ufl.core.expr.Expr,
@@ -54,7 +57,6 @@ def compute_integration_data(
     Returns:
         A tuple `(in_entities, out_entities) mapping integration entities on each edge of the network
         (marked by color) to its integration entities on the parent mesh.
-
     """
 
     # Pack all bifurcation in and out fluxes per colored edge in graph
@@ -104,7 +106,19 @@ def compute_integration_data(
     return in_flux_entities, out_flux_entities
 
 
-class Assembler:
+class HydraulicNetworkAssembler:
+    """
+    Assembler for the variational formulation of an hydraulic network.
+
+    .. math::
+        R q + \\frac{\\mathrm{d}}{\\mathrm{d}s} p = 0 \\\\
+        \\frac{\\mathrm{d}}{\\mathrm{d}s} q  = f
+
+    Args:
+        config: The configuration file, selecting the degree of flux and
+            pressure spaces.
+        mesh: The network mesh
+    """
     _network_mesh: mesh.NetworkMesh
     _flux_spaces: list[fem.FunctionSpace]
     _pressure_space: fem.FunctionSpace
@@ -182,21 +196,25 @@ class Assembler:
     @timeit
     def compute_forms(
         self,
-        f=None,
-        p_bc_ex=None,
+        p_bc_ex: PressureFunction,
+        f: ufl.core.expr.Expr|None=None,
         jit_options: dict | None = None,
         form_compiler_options: dict | None = None,
     ):
         """
         Compute forms for hydraulic network model
-            R q + d/ds p = 0
-            d/ds q = f
+
+        .. math::
+            R q + \\frac{\\mathrm{d}}{\\mathrm{d}s} p = 0\\\\
+            \\frac{\\mathrm{d}}{\\mathrm{d}s} q  = f
+
+
         on graph G, with bifurcation condition q_in = q_out
         and jump vectors the bifurcation conditions
 
         Args:
-           f (dolfinx.fem.function): source term
-           p_bc (class): neumann bc for pressure
+           f: source term
+           p_bc: neumann bc for pressure
         """
 
         if f is None:
@@ -327,13 +345,15 @@ class Assembler:
     def assemble(
         self, A: PETSc.Mat | None = None, b: PETSc.Mat | None = None
     ) -> tuple[PETSc.Mat, PETSc.Vec]:
-        """Assemble system matrix and rhs vector
+        """Assemble system matrix and rhs vector.
+
+        Note:
+            If neither `A` or `b` is provided, they are created inside this class.
+            
 
         Args:
-            A: PETSc matrix to assemble `self.a` into. This matrix is just a subset of the system
-               if using the old Lagrange-multiplier approach
-            b: PETSc vector to assemble `self.L` into. This vector is just a subset of the system
-               if using the old Lagrange-multiplier approach
+            A: :py:class:`PETSc matrix<petsc4py.petsc.Mat>` to assemble :py:meth:`HydraulicAssembler.a` into.
+            b: :py:class:`PETSc vector<petsc4py.petsc.Vec>` to assemble :py:meth:`HydraulicAssembler.L` into.
         """
         if A is None:
             A = fem.petsc.create_matrix(self.a)

@@ -26,7 +26,7 @@ class p_bc_expr:
 
 
 # One element per segment
-cfg.lcar = 1
+cfg.lcar = 2
 # Cleaning directory only once
 # cfg.clean_dir()
 cfg.clean = False
@@ -38,7 +38,7 @@ if cache_dir.exists():
 
 cffi_options = ["-Ofast", "-march=native"]
 jit_options = {"cache_dir": cache_dir, "cffi_extra_compile_args": cffi_options}
-ns = [3, 6, 12, 24]
+ns = [3, 6, 12, 22]
 for n in ns:
     if MPI.COMM_WORLD.rank == 0:
         with (cfg.outdir / "profiling.txt").open("a") as f:
@@ -68,7 +68,7 @@ for n in ns:
 
     end2 = time.perf_counter()
     print(f"generate mesh: {end2 - start2}")
-    assembler = assembly.Assembler(cfg, network_mesh)
+    assembler = assembly.HydraulicNetworkAssembler(cfg, network_mesh)
     # Compute forms
     assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
 
@@ -96,7 +96,7 @@ for n in ns:
     G = mesh_generation.make_tree(n=n, H=n, W=n)
     network_mesh = NetworkMesh(G, cfg)
 
-    assembler = assembly.Assembler(cfg, network_mesh)
+    assembler = assembly.HydraulicNetworkAssembler(cfg, network_mesh)
     # Compute forms
     assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
 

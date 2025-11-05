@@ -22,7 +22,7 @@ class p_bc_expr:
         # return np.full(x.shape[1], x[0])
 
 
-assembler = assembly.Assembler(cfg, G)
+assembler = assembly.HydraulicNetworkAssembler(cfg, G)
 assembler.compute_forms(p_bc_ex=p_bc_expr())
 assembler.assemble()
 

@@ -21,7 +21,7 @@ class Solver:
         self,
         config: config.Config,
         network_mesh: mesh.NetworkMesh,
-        assembler: assembly.Assembler,
+        assembler: assembly.HydraulicNetworkAssembler,
     ):
         self.network_mesh = network_mesh
         self._ksp = PETSc.KSP().create(self.network_mesh.mesh.comm)

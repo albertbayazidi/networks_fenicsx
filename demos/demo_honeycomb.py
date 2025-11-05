@@ -18,7 +18,6 @@ cfg.outdir = "demo_honeycomb"
 cfg.export = True
 
 # cfg.lcar = 0.25
-cfg.lm_space = True
 
 # Cleaning directory only once
 cfg.clean_dir()
@@ -45,7 +44,7 @@ class p_bc_expr:
         return np.full(x.shape[1], x[0] + x[1])
 
 
-assembler = assembly.Assembler(cfg, G)
+assembler = assembly.HydraulicNetworkAssembler(cfg, G)
 assembler.compute_forms(p_bc_ex=p_bc_expr())
 
 solver = solver.Solver(cfg, G, assembler)

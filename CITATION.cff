@@ -1,0 +1,26 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: MPI compatible implementation of graph networks in FEniCSx
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Jørgen
+    family-names: Schartum Dokken
+    email: dokken@simula.no
+    affiliation: Simula Research Laboratory
+    orcid: 'https://orcid.org/0000-0001-6489-8858'
+repository-code: 'https://github.com/cdaversin/networks_fenicsx'
+url: 'https://github.com/cdaversin/networks_fenicsx'
+keywords:
+  - FEniCS
+  - FEM
+  - DOLFINx
+  - networkx
+  - MPI
+license: GPL-3.0
+version: 0.2.0.dev0
+date-released: '2025-11-05'

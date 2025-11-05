@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 from dolfinx import fem
 import ufl
 from pathlib import Path
-from networks_fenicsx import NetworkMesh
+from networks_fenicsx import NetworkMesh, HydraulicNetworkAssembler
 from networks_fenicsx.utils.post_processing import export
 from networks_fenicsx.mesh import mesh_generation
-from networks_fenicsx.solver import assembly, solver
+from networks_fenicsx.solver import solver
 from networks_fenicsx.config import Config
 
 
@@ -36,10 +36,8 @@ for i in range(10):
     lcars.append(lcar)
 
     network_mesh = NetworkMesh(G, cfg)
-    assembler = assembly.Assembler(cfg, network_mesh)
+    assembler = HydraulicNetworkAssembler(cfg, network_mesh)
     
-    # Workaround until: https://github.com/FEniCS/dolfinx/pull/3974 is merged
-    network_mesh.lm_mesh.topology.create_entity_permutations()
     assembler.compute_forms(p_bc_ex=p_bc_expr())
 
     solver_ = solver.Solver(cfg, network_mesh, assembler)
