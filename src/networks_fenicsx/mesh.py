@@ -162,8 +162,8 @@ class NetworkMesh:
         bifurcation_values = None
         boundary_values = None
         number_of_nodes = None
-        bifurcation_in_color = None
-        bifurcation_out_color = None
+        bifurcation_in_color: dict[int, list[int]] | None = None
+        bifurcation_out_color: dict[int, list[int]] | None = None
         if comm.rank == graph_rank:
             assert isinstance(graph, nx.DiGraph), f"Directional graph not present of {graph_rank}"
             geom_dim = len(graph.nodes[1]["pos"])
@@ -228,6 +228,9 @@ class NetworkMesh:
 
         # Generate mesh
         if comm.rank == graph_rank:
+            assert isinstance(graph, nx.DiGraph), (
+                f"No directional graph present on rank {comm.rank}"
+            )
             vertex_coords = np.asarray([graph.nodes[v]["pos"] for v in graph.nodes()])
             line_weights = np.linspace(0, 1, int(np.ceil(1 / self.cfg.lcar)), endpoint=False)[1:][
                 :, None

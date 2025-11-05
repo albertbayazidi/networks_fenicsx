@@ -5,6 +5,7 @@
 
 
 This repository contains a re-implementation of [GraphNics](https://github.com/IngeborgGjerde/graphnics/)
+and [FEniCS-Networks](https://github.com/IngeborgGjerde/fenics-networks)
 by I. Gjerde (DOI: [10.48550/arXiv.2212.02916](https://doi.org10.48550/arXiv.2212.02916)).
 
 An initial implementation compatible with [DOLFINx](https://github.com/FEniCS/dolfinx/)
