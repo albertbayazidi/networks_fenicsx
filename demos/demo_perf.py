@@ -3,10 +3,14 @@ import shutil
 from mpi4py import MPI
 
 from dolfinx.io import VTXWriter
-from networks_fenicsx import NetworkMesh, HydraulicNetworkAssembler, Solver
-from networks_fenicsx import Config
-from networks_fenicsx import network_generation
-from networks_fenicsx.post_processing import export_functions, extract_global_flux, export_submeshes
+from networks_fenicsx import (
+    Config,
+    HydraulicNetworkAssembler,
+    NetworkMesh,
+    Solver,
+    network_generation,
+)
+from networks_fenicsx.post_processing import export_functions, export_submeshes, extract_global_flux
 
 cfg = Config()
 cfg.export = True
