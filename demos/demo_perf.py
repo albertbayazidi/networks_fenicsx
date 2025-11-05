@@ -1,14 +1,12 @@
 import shutil
-import time
 
 from mpi4py import MPI
 
-from networks_fenicsx import NetworkMesh
-from networks_fenicsx.config import Config
-from networks_fenicsx.mesh import mesh_generation
-from networks_fenicsx.solver import assembly, solver
-from networks_fenicsx.utils.post_processing import export
-from networks_fenicsx.utils.timers import timing_table
+from dolfinx.io import VTXWriter
+from networks_fenicsx import NetworkMesh, HydraulicNetworkAssembler, Solver
+from networks_fenicsx import Config
+from networks_fenicsx import network_generation
+from networks_fenicsx.post_processing import export_functions, extract_global_flux, export_submeshes
 
 cfg = Config()
 cfg.export = True
@@ -38,79 +36,54 @@ if cache_dir.exists():
 
 cffi_options = ["-Ofast", "-march=native"]
 jit_options = {"cache_dir": cache_dir, "cffi_extra_compile_args": cffi_options}
-ns = [3, 6, 12, 22]
+ns = [3, 6, 12]
 for n in ns:
-    if MPI.COMM_WORLD.rank == 0:
-        with (cfg.outdir / "profiling.txt").open("a") as f:
-            f.write("n: " + str(n) + "\n")
-
     # Create tree
     if MPI.COMM_WORLD.rank == 0:
-        G = mesh_generation.make_tree(n=n, H=n, W=n)
+        G = network_generation.make_tree(n=n, H=n, W=n)
     else:
         G = None
-    start2 = time.perf_counter()
     network_mesh = NetworkMesh(G, cfg)
     del G
     network_mesh.export_tangent()
-
-    for i in range(network_mesh._num_edge_colors):
-        import dolfinx
-
-        network_mesh.submeshes[i].topology.create_connectivity(0, 1)
-        with dolfinx.io.XDMFFile(
-            network_mesh.submeshes[i].comm, cfg.outdir / f"submesh_{i}.xdmf", "w"
-        ) as xdmf:
-            xdmf.write_mesh(network_mesh.submeshes[i])
-            xdmf.write_meshtags(
-                network_mesh.submesh_facet_markers[i], network_mesh.submeshes[i].geometry
-            )
-
-    end2 = time.perf_counter()
-    print(f"generate mesh: {end2 - start2}")
-    assembler = assembly.HydraulicNetworkAssembler(cfg, network_mesh)
+    export_submeshes(network_mesh, cfg.outdir / f"n{n}")
+    assembler = HydraulicNetworkAssembler(cfg, network_mesh)
     # Compute forms
     assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
 
     # Solve
-    solver_ = solver.Solver(cfg, network_mesh, assembler)
-    sol = solver_.solve()
+    solver = Solver(assembler)
+    solver.assemble()
+    sol = solver.solve()
 
-    (fluxes, global_flux, pressure) = export(
-        network_mesh, assembler.function_spaces, sol, outpath=cfg.outdir / f"n{n}"
-    )
-t_dict = timing_table(cfg)
-exit()
-if MPI.COMM_WORLD.rank == 0:
-    print("n = ", t_dict["n"])
-    print("compute_forms time = ", t_dict["compute_forms"])
-    print("assembly time = ", t_dict["assemble"])
-    print("solve time = ", t_dict["solve"])
+    export_functions(sol, outpath=cfg.outdir / f"n{n}")
+    global_flux = extract_global_flux(network_mesh, sol)
+    with VTXWriter(
+        global_flux.function_space.mesh.comm, cfg.outdir / f"n{n}" / "global_flux.bp", [global_flux]
+    ) as vtx:
+        vtx.write(0.0)
+    del assembler
+    del solver
+    del network_mesh
 
+# Rerun with cache
 for n in ns:
     if MPI.COMM_WORLD.rank == 0:
         with (cfg.outdir / "profiling.txt").open("a") as f:
             f.write("n: " + str(n) + "\n")
 
     # Create tree
-    G = mesh_generation.make_tree(n=n, H=n, W=n)
+    G = network_generation.make_tree(n=n, H=n, W=n)
     network_mesh = NetworkMesh(G, cfg)
 
-    assembler = assembly.HydraulicNetworkAssembler(cfg, network_mesh)
+    assembler = HydraulicNetworkAssembler(cfg, network_mesh)
     # Compute forms
     assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
 
     # Solve
-    solver_ = solver.Solver(cfg, network_mesh, assembler)
-    sol = solver_.solve()
-    (fluxes, global_flux, pressure) = export(
-        network_mesh, assembler.function_spaces, sol, outpath=cfg.outdir / f"n{n}"
-    )
-
-t_dict = timing_table(cfg)
-
-if MPI.COMM_WORLD.rank == 0:
-    print("n = ", t_dict["n"])
-    print("compute_forms time = ", t_dict["compute_forms"])
-    print("assembly time = ", t_dict["assemble"])
-    print("solve time = ", t_dict["solve"])
+    solver = Solver(assembler)
+    solver.assemble()
+    sol = solver.solve()
+    del assembler
+    del solver
+    del network_mesh

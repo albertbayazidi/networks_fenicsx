@@ -10,7 +10,6 @@ from petsc4py import PETSc
 import dolfinx.fem.petsc
 import dolfinx.la.petsc
 from networks_fenicsx import assembly, config
-from networks_fenicsx.timers import timeit
 
 __all__ = ["Solver"]
 
@@ -116,7 +115,6 @@ class Solver:
     def ksp(self) -> PETSc.KSP:
         return self._ksp
 
-    @timeit
     def solve(
         self, functions: list[dolfinx.fem.Function] | None = None
     ) -> list[dolfinx.fem.Function]:

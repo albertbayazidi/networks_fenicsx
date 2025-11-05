@@ -18,7 +18,6 @@ from dolfinx import fem
 from networks_fenicsx import config
 
 from .mesh import NetworkMesh
-from .timers import timeit
 
 __all__ = ["HydraulicNetworkAssembler", "PressureFunction"]
 
@@ -27,7 +26,6 @@ class PressureFunction(Protocol):
     def eval(x: npt.NDArray[np.floating]) -> npt.NDArray[np.inexact]: ...
 
 
-@timeit
 def compute_integration_data(
     network_mesh: NetworkMesh,
 ) -> tuple[dict[int, npt.NDArray[np.int32]], dict[int, npt.NDArray[np.int32]]]:
@@ -173,13 +171,6 @@ class HydraulicNetworkAssembler:
         """Configuration object"""
         return self._cfg
 
-    def dds(self, f):
-        """
-        function for derivative df/ds along graph
-        """
-        return ufl.dot(ufl.grad(f), self._network_mesh.tangent)
-
-    @timeit
     def compute_forms(
         self,
         p_bc_ex: PressureFunction,
@@ -227,6 +218,7 @@ class HydraulicNetworkAssembler:
         P1_e = fem.functionspace(network_mesh.mesh, ("Lagrange", 1))
         p_bc = fem.Function(P1_e)
         p_bc.interpolate(p_bc_ex.eval)
+        tangent = self._network_mesh.tangent
         for i, (submesh, entity_map, facet_marker) in enumerate(
             zip(
                 network_mesh.submeshes,
@@ -243,13 +235,13 @@ class HydraulicNetworkAssembler:
                 form_compiler_options=form_compiler_options,
             )
             self._a[num_qs][i] = fem.form(
-                phi * self.dds(qs[i]) * dx_edge,
+                phi * ufl.dot(ufl.grad(qs[i]), tangent) * dx_edge,
                 entity_maps=[entity_map],
                 jit_options=jit_options,
                 form_compiler_options=form_compiler_options,
             )
             self._a[i][num_qs] = fem.form(
-                -p * self.dds(vs[i]) * dx_edge,
+                -p * ufl.dot(ufl.grad(vs[i]), tangent) * dx_edge,
                 entity_maps=[entity_map],
                 jit_options=jit_options,
                 form_compiler_options=form_compiler_options,
@@ -338,7 +330,6 @@ class HydraulicNetworkAssembler:
         """Return the underlying network mesh."""
         return self._network_mesh
 
-    @timeit
     def assemble(
         self,
         A: PETSc.Mat | None = None,

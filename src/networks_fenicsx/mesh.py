@@ -22,7 +22,6 @@ from dolfinx import fem, mesh
 from dolfinx import graph as _graph
 from dolfinx import io as _io
 from networks_fenicsx import config
-from networks_fenicsx.timers import timeit
 
 __all__ = ["NetworkMesh", "compute_tangent"]
 
@@ -115,7 +114,6 @@ class NetworkMesh:
         """The configuration setup"""
         return self._cfg
 
-    @timeit
     def _create_lm_submesh(self):
         """Create a submesh for the Lagrange multipliers at the bifurcations.
 
@@ -136,7 +134,6 @@ class NetworkMesh:
         # Workaround until: https://github.com/FEniCS/dolfinx/pull/3974 is merged
         self._lm_mesh.topology.create_entity_permutations()
 
-    @timeit
     def _build_mesh(
         self, graph: nx.DiGraph | None, comm: MPI.Comm = MPI.COMM_WORLD, graph_rank: int = 0
     ):
@@ -240,7 +237,7 @@ class NetworkMesh:
             cell_markers = []
             if len(line_weights) == 0:
                 for segment in cells_array:
-                    cells.append([segment[0], segment[1]])
+                    cells.append(np.array([segment[0], segment[1]], dtype=np.int64))
                     cell_markers.append(edge_coloring[(segment[0], segment[1])])
             else:
                 for segment in cells_array:
@@ -250,7 +247,7 @@ class NetworkMesh:
 
                     internal_line_coords = start * (1 - line_weights) + end * line_weights
                     mesh_nodes = np.vstack((mesh_nodes, internal_line_coords))
-                    cells.append([segment[0], start_coord_pos])
+                    cells.append(np.array([segment[0], start_coord_pos], dtype=np.int64))
                     segment_connectivity = (
                         np.repeat(np.arange(internal_line_coords.shape[0]), 2)[1:-1].reshape(
                             internal_line_coords.shape[0] - 1, 2
@@ -259,10 +256,13 @@ class NetworkMesh:
                     )
                     cells.append(segment_connectivity)
                     cells.append(
-                        [
-                            start_coord_pos + internal_line_coords.shape[0] - 1,
-                            segment[1],
-                        ]
+                        np.array(
+                            [
+                                start_coord_pos + internal_line_coords.shape[0] - 1,
+                                segment[1],
+                            ],
+                            dtype=np.int64,
+                        )
                     )
                     cell_markers.extend(
                         np.full(
@@ -336,7 +336,6 @@ class NetworkMesh:
     def out_marker(self) -> int:
         return self._out_marker
 
-    @timeit
     def _build_network_submeshes(self):
         """Create submeshes for each edge in the network."""
         assert self._msh is not None

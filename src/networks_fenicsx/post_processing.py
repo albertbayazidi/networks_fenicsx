@@ -13,7 +13,7 @@ import numpy as np
 from dolfinx import fem, io
 from networks_fenicsx.mesh import NetworkMesh
 
-__all__ = ["extract_global_flux", "export_functions"]
+__all__ = ["extract_global_flux", "export_functions", "export_submeshes"]
 
 
 def extract_global_flux(graph_mesh: NetworkMesh, functions: list[fem.Function]) -> fem.Function:
@@ -76,3 +76,22 @@ def export_functions(
         f.write(0.0)
     with io.VTXWriter(MPI.COMM_WORLD, export_path / "lm.bp", functions[-1]) as f:
         f.write(0.0)
+
+
+def export_submeshes(network_mesh: NetworkMesh, outpath: str | Path):
+    """Export syvmeshes with appropriate facet markers to file.
+
+    Args:
+        network_mesh: The network mesh
+        outpath: Folder to place the submeshes in
+    """
+    outpath = Path(outpath)
+    for i in range(network_mesh._num_edge_colors):
+        network_mesh.submeshes[i].topology.create_connectivity(0, 1)
+        with io.XDMFFile(
+            network_mesh.submeshes[i].comm, outpath / f"submesh_{i}.xdmf", "w"
+        ) as xdmf:
+            xdmf.write_mesh(network_mesh.submeshes[i])
+            xdmf.write_meshtags(
+                network_mesh.submesh_facet_markers[i], network_mesh.submeshes[i].geometry
+            )
