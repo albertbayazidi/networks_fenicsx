@@ -4,8 +4,8 @@ from networks_fenicsx import Config, NetworkMesh, network_generation
 
 
 @pytest.mark.parametrize("gdim", [2, 3])
-@pytest.mark.parametrize("lcar", [1, 0.5, 0.1])
-def test_Y_bifurcation(gdim, lcar):
+@pytest.mark.parametrize("lcar", [1.0, 0.5, 0.1])
+def test_Y_bifurcation(gdim: int, lcar: float):
     # Create Y bifurcation graph
     G = network_generation.make_tree(n=2, H=1, W=1, dim=gdim)
     config = Config()

@@ -37,7 +37,7 @@ addopts = ["--import-mode=importlib"]
 [tool.mypy]
 ignore_missing_imports = true
 # Folders to exclude
-exclude = ["docs/", "build/", "tests"]
+exclude = ["docs/build/", "build/"]
 # Folder to check with mypy
 files = ["src"]
 
