@@ -7,7 +7,7 @@ import ufl
 from pathlib import Path
 from networks_fenicsx import Config, NetworkMesh, HydraulicNetworkAssembler, Solver
 from networks_fenicsx.post_processing import extract_global_flux, export_functions
-from networks_fenicsx.mesh import mesh_generation
+from networks_fenicsx import network_generation
 
 
 cfg = Config()
@@ -28,7 +28,7 @@ lcars, min_q, max_q, mean_q = [], [], [], []
 lcar = 1.0
 
 # Create tree
-G = mesh_generation.make_tree(n=2, H=1, W=1)
+G = network_generation.make_tree(n=2, H=1, W=1)
 for i in range(10):
     lcar /= 2.0
     cfg.lcar = lcar

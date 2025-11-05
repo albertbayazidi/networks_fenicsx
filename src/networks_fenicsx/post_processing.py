@@ -7,16 +7,14 @@ Convenience functions for post-processing.
 from mpi4py import MPI
 from dolfinx import fem, io
 from pathlib import Path
-import matplotlib.pyplot as plt
 import numpy as np
 
-from networks_fenicsx.mesh import mesh
+from networks_fenicsx.mesh import NetworkMesh
 
 __all__ = ["extract_global_flux", "export_functions"]
 
-def extract_global_flux(
-    graph_mesh: mesh.NetworkMesh,
-    functions: list[fem.Function])-> fem.Function:
+
+def extract_global_flux(graph_mesh: NetworkMesh, functions: list[fem.Function]) -> fem.Function:
     """Extract global flux function from submesh solutions
 
     Args:
@@ -38,7 +36,7 @@ def extract_global_flux(
         flux.name = f"Flux_{i}"
         submesh = flux.function_space.mesh
         num_cells_local = (
-        submesh.topology.index_map(submesh.topology.dim).size_local
+            submesh.topology.index_map(submesh.topology.dim).size_local
             + submesh.topology.index_map(submesh.topology.dim).num_ghosts
         )
         submesh_to_parent = entity_map.sub_topology_to_topology(
@@ -56,7 +54,7 @@ def export_functions(
     functions: list[fem.Function],
     outpath: Path | str,
 ):
-    """Export global flux function from submesh solutions.    
+    """Export global flux function from submesh solutions.
     Args:
         functions: The list of functions `[flux_1, flux_2, ..., flux_M, pressure, lm]`
         outpath: The output directory to save the files to.
@@ -71,12 +69,8 @@ def export_functions(
             q,
         ) as f:
             f.write(0.0)
-    
-    with io.VTXWriter(
-        MPI.COMM_WORLD, export_path / "pressure.bp", functions[-2]
-    ) as f:
+
+    with io.VTXWriter(MPI.COMM_WORLD, export_path / "pressure.bp", functions[-2]) as f:
         f.write(0.0)
-    with io.VTXWriter(
-        MPI.COMM_WORLD, export_path / "lm.bp", functions[-1]
-    ) as f:
+    with io.VTXWriter(MPI.COMM_WORLD, export_path / "lm.bp", functions[-1]) as f:
         f.write(0.0)

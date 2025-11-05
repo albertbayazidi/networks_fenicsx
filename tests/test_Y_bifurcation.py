@@ -1,4 +1,4 @@
-from networks_fenicsx.mesh import mesh_generation
+from networks_fenicsx import network_generation
 from networks_fenicsx.config import Config
 
 
@@ -9,7 +9,7 @@ cfg.clean = True
 cfg.lcar = 0.2
 
 # Create Y bifurcation graph
-G = mesh_generation.make_Y_bifurcation(cfg)
+G = network_generation.make_Y_bifurcation(cfg)
 
 
 domain = G.mesh

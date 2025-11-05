@@ -1,7 +1,8 @@
 from pathlib import Path
 import dolfinx.io
 from networks_fenicsx import NetworkMesh, HydraulicNetworkAssembler, Solver, Config
-from networks_fenicsx.mesh import arterial_tree
+from networks_fenicsx.network_generation import make_arterial_tree
+import numpy as np
 
 from networks_fenicsx.post_processing import export_functions, extract_global_flux
 import networkx as ntx
@@ -32,11 +33,7 @@ p.mkdir(exist_ok=True)
 
 n = 5
 
-G = arterial_tree.make_arterial_tree(
-    N=n,
-    directions=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-)
-
+G = make_arterial_tree(N=n, direction=np.array([0.1, 1, 0]))
 
 network_mesh = NetworkMesh(G, cfg)
 assembler = HydraulicNetworkAssembler(cfg, network_mesh)

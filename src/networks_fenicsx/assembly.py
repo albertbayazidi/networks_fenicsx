@@ -13,7 +13,7 @@ import basix
 import logging
 import numpy as np
 import numpy.typing as npt
-from networks_fenicsx.mesh import mesh
+from .mesh import NetworkMesh
 from .timers import timeit
 from networks_fenicsx import config
 
@@ -21,8 +21,8 @@ __all__ = ["HydraulicNetworkAssembler", "PressureFunction"]
 
 
 class PressureFunction(Protocol):
-    def eval(x: npt.NDArray[np.floating])-> npt.NDArray[np.inexact]:
-        ...
+    def eval(x: npt.NDArray[np.floating]) -> npt.NDArray[np.inexact]: ...
+
 
 def flux_term(
     q: ufl.core.expr.Expr,
@@ -40,7 +40,7 @@ def flux_term(
 
 @timeit
 def compute_integration_data(
-    network_mesh: mesh.NetworkMesh,
+    network_mesh: NetworkMesh,
 ) -> tuple[dict[int, npt.NDArray[np.int32]], dict[int, npt.NDArray[np.int32]]]:
     """Given a network mesh, compute integration entities for the "parent" network mesh
     for each bifuraction in the mesh.
@@ -113,7 +113,8 @@ class HydraulicNetworkAssembler:
             pressure spaces.
         mesh: The network mesh
     """
-    _network_mesh: mesh.NetworkMesh
+
+    _network_mesh: NetworkMesh
     _flux_spaces: list[fem.FunctionSpace]
     _pressure_space: fem.FunctionSpace
     _lm_space: fem.FunctionSpace
@@ -122,10 +123,10 @@ class HydraulicNetworkAssembler:
     _out_idx: int  # Starting point for each outflux interior bifurcation integral
     _in_keys: tuple[int]  # Set of unique markers for all influx conditions
     _out_keys: tuple[int]  # Set of unique markers for all outflux conditions
-    _a: list[list[fem.Form|None]]  # Bilinear forms
-    _L: list[fem.Form|None]  # Linear forms
+    _a: list[list[fem.Form | None]]  # Bilinear forms
+    _L: list[fem.Form | None]  # Linear forms
 
-    def __init__(self, config: config.Config, mesh: mesh.NetworkMesh):
+    def __init__(self, config: config.Config, mesh: NetworkMesh):
         self._network_mesh = mesh
         self._cfg = config
         submeshes = self._network_mesh.submeshes
@@ -191,7 +192,7 @@ class HydraulicNetworkAssembler:
     def compute_forms(
         self,
         p_bc_ex: PressureFunction,
-        f: ufl.core.expr.Expr|None=None,
+        f: ufl.core.expr.Expr | None = None,
         jit_options: dict | None = None,
         form_compiler_options: dict | None = None,
     ):
@@ -306,7 +307,7 @@ class HydraulicNetworkAssembler:
                 jit_options=jit_options,
                 form_compiler_options=form_compiler_options,
             )
-   
+
         # Add zero to uninitialized diagonal blocks (needed by petsc)
         self._a[num_qs][num_qs] = fem.form(
             ufl.ZeroBaseForm((p, phi)),
@@ -320,30 +321,33 @@ class HydraulicNetworkAssembler:
         )
 
     @property
-    def lm_space(self)-> fem.FunctionSpace:
+    def lm_space(self) -> fem.FunctionSpace:
         return self._lm_space
 
     @property
-    def pressure_space(self)->fem.FunctionSpace:
+    def pressure_space(self) -> fem.FunctionSpace:
         return self._pressure_space
 
     @property
-    def flux_spaces(self)->list[fem.FunctionSpace]:
+    def flux_spaces(self) -> list[fem.FunctionSpace]:
         return self._flux_spaces
 
     @property
-    def function_spaces(self)->list[fem.FunctionSpace]:
+    def function_spaces(self) -> list[fem.FunctionSpace]:
         return [*self._flux_spaces, self._pressure_space, self._lm_space]
 
     @property
-    def network(self) -> mesh.NetworkMesh:
+    def network(self) -> NetworkMesh:
         return self._network_mesh
 
     @timeit
     def assemble(
-        self, A: PETSc.Mat | None = None, b: PETSc.Mat | None = None,
-        assemble_lhs: bool = True, assemble_rhs: bool = True,
-        kind: str | typing.Sequence[typing.Sequence[str]] | None = None
+        self,
+        A: PETSc.Mat | None = None,
+        b: PETSc.Mat | None = None,
+        assemble_lhs: bool = True,
+        assemble_rhs: bool = True,
+        kind: str | typing.Sequence[typing.Sequence[str]] | None = None,
     ) -> tuple[PETSc.Mat, PETSc.Vec]:
         """Assemble system matrix and rhs vector.
 
@@ -367,9 +371,11 @@ class HydraulicNetworkAssembler:
             if b is None:
                 b = fem.petsc.create_vector(fem.extract_function_spaces(self._L), kind=kind)
             b = fem.petsc.assemble_vector(b, self._L)
-            _petsc_la._ghost_update(b, insert_mode=PETSc.InsertMode.ADD_VALUES, scatter_mode=PETSc.ScatterMode.REVERSE)
+            _petsc_la._ghost_update(
+                b, insert_mode=PETSc.InsertMode.ADD_VALUES, scatter_mode=PETSc.ScatterMode.REVERSE
+            )
         return (A, b)
-      
+
     @property
     def bilinear_forms(self) -> list[list[fem.Form]]:
         """Nested list of the compiled, bilinear forms."""
@@ -378,7 +384,7 @@ class HydraulicNetworkAssembler:
         else:
             return self._a
 
-    def bilinear_form(self, i: int, j: int)-> fem.Form:
+    def bilinear_form(self, i: int, j: int) -> fem.Form:
         """Extract the i,j bilinear form."""
         a = self.bilinear_forms
         if i > len(a) or j > len(a[i]):
