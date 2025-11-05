@@ -12,7 +12,7 @@ cfg.clean = True
 cfg.lcar = 0.25
 
 # Create Y bifurcation graph
-G = mesh_generation.make_Y_bifurcation(cfg)
+G = mesh_generation.make_tree(2,1,3)
 
 network_mesh = NetworkMesh(G, cfg)
 
