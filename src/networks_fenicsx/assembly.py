@@ -4,7 +4,7 @@
 
 from petsc4py import PETSc
 from typing import Protocol
-from dolfinx import fem, mesh as _mesh
+from dolfinx import fem
 import dolfinx.la.petsc as _petsc_la
 import ufl
 
@@ -22,20 +22,6 @@ __all__ = ["HydraulicNetworkAssembler", "PressureFunction"]
 
 class PressureFunction(Protocol):
     def eval(x: npt.NDArray[np.floating]) -> npt.NDArray[np.inexact]: ...
-
-
-def flux_term(
-    q: ufl.core.expr.Expr,
-    facet_marker: _mesh.MeshTags | list[tuple[int, npt.NDArray[np.int32]]],
-    tag: int,
-) -> ufl.Form:
-    ds = ufl.Measure(
-        "ds",
-        domain=q.ufl_function_space().mesh,
-        subdomain_data=facet_marker,
-        subdomain_id=tag,
-    )
-    return q * ds
 
 
 @timeit
@@ -181,6 +167,7 @@ class HydraulicNetworkAssembler:
 
     @property
     def cfg(self):
+        """Configuration object"""
         return self._cfg
 
     def dds(self, f):
@@ -323,22 +310,29 @@ class HydraulicNetworkAssembler:
 
     @property
     def lm_space(self) -> fem.FunctionSpace:
+        """The function space of the bifurcation Lagrange multipliers"""
         return self._lm_space
 
     @property
     def pressure_space(self) -> fem.FunctionSpace:
+        """The function space of the pressure function"""
         return self._pressure_space
 
     @property
     def flux_spaces(self) -> list[fem.FunctionSpace]:
+        """List of function spaces for each flux function. The ith function corresponds
+        to the edges of the :py:class:`networkx.DiGraph` that were colored with color `i`."""
         return self._flux_spaces
 
     @property
     def function_spaces(self) -> list[fem.FunctionSpace]:
+        """List of all function-spaces in the order `[flux, pressure, lm]`,
+        the same order as used by the :py:meth:`assemble`"""
         return [*self._flux_spaces, self._pressure_space, self._lm_space]
 
     @property
     def network(self) -> NetworkMesh:
+        """Return the underlying network mesh."""
         return self._network_mesh
 
     @timeit
