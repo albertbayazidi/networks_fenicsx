@@ -1,3 +1,5 @@
+# Copyright (C) Simula Research Laboratory and Cécile Daversin-Catty
+# SPDX-License-Identifier:    MIT
 """Utilities for generating :py:class:`Networkx Directional graphs<networkx.DiGraph>`"""
 
 __all__ = ["make_tree"]

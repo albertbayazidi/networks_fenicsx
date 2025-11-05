@@ -1,5 +1,5 @@
 # Copyright (C) Simula Research Laboratory and Cécile Daversin-Catty and Jørgen S. Dokken
-# SPDX-License-Identifier:    LGPL-3.0-or-later
+# SPDX-License-Identifier:    MIT
 """
 Timer utilities for profiling
 """

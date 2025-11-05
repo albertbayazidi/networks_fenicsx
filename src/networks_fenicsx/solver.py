@@ -1,5 +1,5 @@
-# Copyright (C) Simula Research Laboratory and Jørgen S. Dokken
-# SPDX-License-Identifier:    LGPL-3.0-or-later
+# Copyright (C) Simula Research Laboratory and Jørgen S. Dokken, Cécile Daversin-Catty
+# SPDX-License-Identifier:    MIT
 """Solver interface for graphs."""
 
 import typing
