@@ -6,7 +6,6 @@
 
 __all__ = ["make_tree", "make_arterial_tree"]
 
-from scipy.spatial.transform import Rotation
 import networkx as nx
 import numpy as np
 import numpy.typing as npt
@@ -112,12 +111,14 @@ def _project_onto_plane(x, n):
 def _rotate_in_plane(
     x: npt.NDArray[np.floating], axis: npt.NDArray[np.floating], angle: float
 ) -> npt.NDArray[np.floating]:
-    """Rotate  `x` around axis `n` for a given `angle`."""
-
-    rotation_radians = np.radians(angle)
-    rotation_vector = rotation_radians * axis
-    rotation = Rotation.from_rotvec(rotation_vector)
-    return rotation.apply(x)
+    """Use Rodrigues formula to rotate a vector in space given an axis and
+    angle of rotation. Ref: https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula
+    """
+    theta = np.radians(angle)
+    k = axis / np.linalg.norm(axis)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
+    return np.dot(R, x)
 
 
 def _compute_vessel_endpoint(previousvessel, surfacenormal, angle, length):
