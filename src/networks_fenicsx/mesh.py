@@ -23,7 +23,7 @@ from dolfinx import graph as _graph
 from dolfinx import io as _io
 from networks_fenicsx import config
 
-__all__ = ["NetworkMesh", "compute_tangent"]
+__all__ = ["NetworkMesh"]
 
 
 def color_graph(
@@ -87,7 +87,6 @@ class NetworkMesh:
         self._cfg.clean_dir()
         self._build_mesh(graph, comm=comm, graph_rank=graph_rank)
         self._build_network_submeshes()
-        self._tangent = compute_tangent(self.mesh)
         self._create_lm_submesh()
 
     @property
@@ -224,6 +223,7 @@ class NetworkMesh:
         self._bifurcation_out_color = bifurcation_out_color
 
         # Generate mesh
+        tangents: npt.NDArray[np.float64] = np.empty((0, self._geom_dim), dtype=np.float64)
         if comm.rank == graph_rank:
             assert isinstance(graph, nx.DiGraph), (
                 f"No directional graph present on rank {comm.rank}"
@@ -235,17 +235,24 @@ class NetworkMesh:
             mesh_nodes = vertex_coords.copy()
             cells = []
             cell_markers = []
+            local_tangents = []
             if len(line_weights) == 0:
                 for segment in cells_array:
                     cells.append(np.array([segment[0], segment[1]], dtype=np.int64))
                     cell_markers.append(edge_coloring[(segment[0], segment[1])])
+                    start = vertex_coords[segment[0]]
+                    end = vertex_coords[segment[1]]
+                    local_tangents.append(_compute_tangent(start, end))
             else:
                 for segment in cells_array:
                     start_coord_pos = mesh_nodes.shape[0]
                     start = vertex_coords[segment[0]]
                     end = vertex_coords[segment[1]]
-
                     internal_line_coords = start * (1 - line_weights) + end * line_weights
+
+                    tangent = _compute_tangent(start, end)
+                    local_tangents.append(np.tile(tangent, (internal_line_coords.shape[0] + 1, 1)))
+
                     mesh_nodes = np.vstack((mesh_nodes, internal_line_coords))
                     cells.append(np.array([segment[0], start_coord_pos], dtype=np.int64))
                     segment_connectivity = (
@@ -273,11 +280,12 @@ class NetworkMesh:
                     )
             cells_ = np.vstack(cells).astype(np.int64)
             cell_markers_ = np.array(cell_markers, dtype=np.int32)
+            tangents = np.vstack(local_tangents).astype(np.float64)
         else:
             cells_ = np.empty((0, 2), dtype=np.int64)
             mesh_nodes = np.empty((0, self._geom_dim), dtype=np.float64)
             cell_markers_ = np.empty((0,), dtype=np.int32)
-
+        tangents = tangents[:, : self._geom_dim].copy()
         partitioner = mesh.create_cell_partitioner(mesh.GhostMode.shared_facet)
         graph_mesh = mesh.create_mesh(
             comm,
@@ -295,12 +303,42 @@ class NetworkMesh:
             cells_,
             cell_markers_,
         )
+
+        # Distribute tangents
+        tangent_space = fem.functionspace(graph_mesh, ("DG", 0, (self._geom_dim,)))
+        self._tangent = fem.Function(tangent_space)
+
+        # Which cells from the input mesh (rank 0) correspond to the local cells on this rank
+        original_cell_indices = self.mesh.topology.original_cell_index[
+            : self.mesh.topology.index_map(self.mesh.topology.dim).size_local
+        ]
+
+        # First compute how much data we are getting from each rank
+        send_count = original_cell_indices.size
+        recv_counts = comm.gather(send_count, root=graph_rank)
+        if comm.rank == graph_rank:
+            assert sum(recv_counts) == cells_.shape[0]
+
+        # Send to rank 0 which tangents that we need
+        recv_buffer = np.empty(cells_.shape[0], dtype=np.int64)
+        comm.Gatherv(sendbuf=original_cell_indices, recvbuf=recv_buffer, root=graph_rank)
+        send_t_buffer = None
+        if comm.rank == graph_rank:
+            send_t_buffer = [
+                tangents[recv_buffer].flatten(),
+                np.array(recv_counts) * self._geom_dim,
+            ]
+
+        comm.Scatterv(sendbuf=send_t_buffer, recvbuf=self.tangent.x.array, root=graph_rank)
+        self.tangent.x.scatter_forward()
+
         self._subdomains = mesh.meshtags_from_entities(
             self.mesh,
             self.mesh.topology.dim,
             _graph.adjacencylist(local_entities),
             local_values,
         )
+
         self._in_marker = 3 * number_of_nodes
         self._out_marker = 5 * number_of_nodes
         if comm.rank == graph_rank:
@@ -311,6 +349,7 @@ class NetworkMesh:
         else:
             lv = np.empty((0, 1), dtype=np.int64)
             lvv = np.empty((0,), dtype=np.int32)
+
         self.mesh.topology.create_connectivity(0, 1)
         local_vertices, local_vertex_values = _io.distribute_entity_data(self.mesh, 0, lv, lvv)
         self._facet_markers = mesh.meshtags_from_entities(
@@ -440,33 +479,21 @@ class NetworkMesh:
         return self._bifurcation_out_color[bifurcation]
 
 
-def compute_tangent(domain: mesh.Mesh) -> fem.Function:
-    """Compute tangent vector for all cells.
+def _compute_tangent(
+    start: npt.NDArray[np.float64], end: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    """Compute the tangent vector from start to end points.
 
     Tangent is oriented according to positive y-axis.
     If perpendicular to y-axis, align with x-axis.
 
-    Note:
-        Assuming that the mesh is affine.
+    Args:
+        start: Starting point coordinates.
+        end: Ending point coordinates.
+
+    Returns:
+        Normalized tangent vector from start to end.
     """
-    cell_map = domain.topology.index_map(domain.topology.dim)
-    geom_indices = mesh.entities_to_geometry(
-        domain,
-        domain.topology.dim,
-        np.arange(cell_map.size_local + cell_map.num_ghosts, dtype=np.int32),
-    )
-    geom_coordinates = domain.geometry.x[geom_indices]
-    tangent = geom_coordinates[:, 0, :] - geom_coordinates[:, 1, :]
-    global_orientation = np.sign(np.dot(tangent, [0, 1, 0]))
-    is_x_aligned = np.isclose(global_orientation, 0)
-    global_orientation[is_x_aligned] = np.sign(np.dot(tangent[is_x_aligned], [1, 0, 0]))
-    tangent *= global_orientation[:, None]
-    assert np.all(np.linalg.norm(tangent, axis=1) > 0), "Zero-length tangent vector detected"
-    gdim = domain.geometry.dim
-    DG0 = fem.functionspace(domain, ("DG", 0, (gdim,)))
-    tangent_norm = np.linalg.norm(tangent, axis=1)
-    tangent /= tangent_norm[:, None]
-    global_tangent = fem.Function(DG0)
-    tangent = tangent[:, :gdim].copy()
-    global_tangent.x.array[:] = tangent.flatten()
-    return global_tangent
+    tangent = end - start
+    tangent /= np.linalg.norm(tangent, axis=-1)
+    return tangent
