@@ -13,9 +13,6 @@ license = { file = "LICENSE" }
 readme = "README.md"
 dependencies = ["fenics-dolfinx>=0.10.0", "networkx"]
 
-[project.scripts]
-networks_fenicsx = "networks_fenicsx.cli:main"
-
 [project.optional-dependencies]
 test = ["pytest"]
 linting = ["mypy", "flake8"]
