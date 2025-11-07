@@ -1,51 +1,58 @@
-import os
+import networkx as ntx
 import numpy as np
-from pathlib import Path
-from mpi4py import MPI
 
-from networks_fenicsx.mesh import arterial_tree
-from networks_fenicsx.solver import assembly, solver
-from networks_fenicsx.config import Config
-# from networks_fenicsx.utils.timers import timing_dict, timing_table
-from networks_fenicsx.utils.post_processing import export  # , perf_plot
+import dolfinx.io
+from networks_fenicsx import Config, HydraulicNetworkAssembler, NetworkMesh, Solver
+from networks_fenicsx.network_generation import make_arterial_tree
+from networks_fenicsx.post_processing import export_functions, extract_global_flux
 
 cfg = Config()
-cfg.outdir = "demo_arterial_tree"
 cfg.export = True
-
-cfg.flux_degree = 2
-cfg.pressure_degree = 1
+cfg.graph_coloring = True
+cfg.color_strategy = ntx.coloring.strategy_largest_first
+cfg.outdir = "demo_arterial_tree"
+cfg.flux_degree = 1
+cfg.pressure_degree = 0
 
 
 class p_bc_expr:
     def eval(self, x):
-        return np.full(x.shape[1], x[1])
+        return x[1]
 
 
 # One element per segment
-cfg.lcar = 2.0
+cfg.lcar = 0.025
 
 # Cleaning directory only once
 cfg.clean_dir()
 cfg.clean = False
 
-p = Path(cfg.outdir)
+p = cfg.outdir
 p.mkdir(exist_ok=True)
 
-n = 3
-if MPI.COMM_WORLD.rank == 0:
-    print('Clearing cache')
-    os.system('rm -rf $HOME/.cache/fenics/')
+n = 5
 
-G = arterial_tree.make_arterial_tree(N=n, cfg=cfg)
+G = make_arterial_tree(N=n, direction=np.array([0.1, 1, 0]))
 
-assembler = assembly.Assembler(cfg, G)
+network_mesh = NetworkMesh(G, cfg)
+assembler = HydraulicNetworkAssembler(cfg, network_mesh)
 # Compute forms
 assembler.compute_forms(p_bc_ex=p_bc_expr())
-# Assemble
-assembler.assemble()
 # Solve
-solver_ = solver.Solver(cfg, G, assembler)
-sol = solver_.solve()
-(fluxes, global_flux, pressure) = export(cfg, G, assembler.function_spaces, sol,
-                                         export_dir="n" + str(n))
+
+solver = Solver(assembler, kind="nest")
+solver.assemble()
+sol = solver.solve()
+global_flux = extract_global_flux(network_mesh, sol)
+
+# Export results
+with dolfinx.io.VTXWriter(
+    global_flux.function_space.mesh.comm,
+    cfg.outdir / f"n{n}" / "global_flux.bp",
+    [global_flux],
+) as vtx:
+    vtx.write(0.0)
+export_functions(
+    functions=sol,
+    outpath=cfg.outdir / f"n{n}",
+)

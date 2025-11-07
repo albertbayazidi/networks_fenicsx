@@ -1,104 +1,93 @@
-import os
-import numpy as np
-from pathlib import Path
+import shutil
+
 from mpi4py import MPI
 
-from networks_fenicsx.mesh import mesh_generation
-from networks_fenicsx.solver import assembly, solver
-from networks_fenicsx.config import Config
-from networks_fenicsx.utils.timers import timing_table
-from networks_fenicsx.utils.post_processing import export
+from dolfinx.io import VTXWriter
+from networks_fenicsx import (
+    Config,
+    HydraulicNetworkAssembler,
+    NetworkMesh,
+    Solver,
+    network_generation,
+)
+from networks_fenicsx.post_processing import export_functions, export_submeshes, extract_global_flux
 
 cfg = Config()
-cfg.outdir = "demo_perf_lm_spaces"
 cfg.export = True
 
-cfg.flux_degree = 3
-cfg.pressure_degree = 2
-
-cfg.lm_spaces = True
-cfg.lm_jump_vectors = False
-# cfg.lm_spaces = False
-# cfg.lm_jump_vectors = True
+cfg.flux_degree = 1
+cfg.pressure_degree = 0
+cfg.graph_coloring = True
+cfg.color_strategy = "smallest_last"
+cfg.outdir = "demo_perf"
 
 
 class p_bc_expr:
     def eval(self, x):
-        return np.full(x.shape[1], x[1])
+        return x[1]
 
 
 # One element per segment
-cfg.lcar = 2.0
-
+cfg.lcar = 2
 # Cleaning directory only once
-cfg.clean_dir()
+# cfg.clean_dir()
 cfg.clean = False
 
-# cfg.outdir = cfg.outdir + "_cache0"
-p = Path(cfg.outdir)
-p.mkdir(exist_ok=True)
+cfg.outdir.mkdir(exist_ok=True, parents=True)
+cache_dir = cfg.outdir / ".cache"
+if cache_dir.exists():
+    shutil.rmtree(cache_dir, ignore_errors=True)
 
-for n in range(2, 7):
-
+cffi_options = ["-Ofast", "-march=native"]
+jit_options = {"cache_dir": cache_dir, "cffi_extra_compile_args": cffi_options}
+ns = [3, 6, 12]
+for n in ns:
+    # Create tree
     if MPI.COMM_WORLD.rank == 0:
-        print('Clearing cache')
-        os.system('rm -rf $HOME/.cache/fenics/')
+        G = network_generation.make_tree(n=n, H=n, W=n)
+    else:
+        G = None
+    network_mesh = NetworkMesh(G, cfg)
+    del G
+    network_mesh.export_tangent()
+    export_submeshes(network_mesh, cfg.outdir / f"n{n}")
+    assembler = HydraulicNetworkAssembler(cfg, network_mesh)
+    # Compute forms
+    assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
 
-        with (p / 'profiling.txt').open('a') as f:
+    # Solve
+    solver = Solver(assembler)
+    solver.assemble()
+    sol = solver.solve()
+
+    export_functions(sol, outpath=cfg.outdir / f"n{n}")
+    global_flux = extract_global_flux(network_mesh, sol)
+    with VTXWriter(
+        global_flux.function_space.mesh.comm, cfg.outdir / f"n{n}" / "global_flux.bp", [global_flux]
+    ) as vtx:
+        vtx.write(0.0)
+    del assembler
+    del solver
+    del network_mesh
+
+# Rerun with cache
+for n in ns:
+    if MPI.COMM_WORLD.rank == 0:
+        with (cfg.outdir / "profiling.txt").open("a") as f:
             f.write("n: " + str(n) + "\n")
 
     # Create tree
-    G = mesh_generation.make_tree(n=n, H=n, W=n, cfg=cfg)
+    G = network_generation.make_tree(n=n, H=n, W=n)
+    network_mesh = NetworkMesh(G, cfg)
 
-    assembler = assembly.Assembler(cfg, G)
+    assembler = HydraulicNetworkAssembler(cfg, network_mesh)
     # Compute forms
-    assembler.compute_forms(p_bc_ex=p_bc_expr())
-    # Assemble
-    assembler.assemble()
+    assembler.compute_forms(p_bc_ex=p_bc_expr(), jit_options=jit_options)
+
     # Solve
-    solver_ = solver.Solver(cfg, G, assembler)
-    sol = solver_.solve()
-    (fluxes, global_flux, pressure) = export(cfg, G, assembler.function_spaces, sol,
-                                             export_dir="n" + str(n))
-
-t_dict = timing_table(cfg)
-
-if MPI.COMM_WORLD.rank == 0:
-    print("n = ", t_dict["n"])
-    print("compute_forms time = ", t_dict["compute_forms"])
-    print("assembly time = ", t_dict["assemble"])
-    print("solve time = ", t_dict["solve"])
-
-
-# Run again without clearing the cache
-cfg.outdir = cfg.outdir + "_cache1"
-p = Path(cfg.outdir)
-p.mkdir(exist_ok=True)
-
-for n in range(2, 7):
-
-    if MPI.COMM_WORLD.rank == 0:
-        with (p / 'profiling.txt').open('a') as f:
-            f.write("n: " + str(n) + "\n")
-
-    # Create tree
-    G = mesh_generation.make_tree(n=n, H=n, W=n, cfg=cfg)
-
-    assembler = assembly.Assembler(cfg, G)
-    # Compute forms
-    assembler.compute_forms(p_bc_ex=p_bc_expr())
-    # Assemble
-    assembler.assemble()
-    # Solve
-    solver_ = solver.Solver(cfg, G, assembler)
-    sol = solver_.solve()
-    (fluxes, global_flux, pressure) = export(cfg, G, assembler.function_spaces, sol,
-                                             export_dir="n" + str(n))
-
-t_dict = timing_table(cfg)
-
-if MPI.COMM_WORLD.rank == 0:
-    print("n = ", t_dict["n"])
-    print("compute_forms time = ", t_dict["compute_forms"])
-    print("assembly time = ", t_dict["assemble"])
-    print("solve time = ", t_dict["solve"])
+    solver = Solver(assembler)
+    solver.assemble()
+    sol = solver.solve()
+    del assembler
+    del solver
+    del network_mesh

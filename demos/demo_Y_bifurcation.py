@@ -1,35 +1,45 @@
-import os
-import numpy as np
-
-from networks_fenicsx.mesh import mesh_generation
-from networks_fenicsx.solver import assembly, solver
-from networks_fenicsx.config import Config
-from networks_fenicsx.utils.post_processing import export
-
-# Clear fenics cache
-print('Clearing cache')
-os.system('dijitso clean')
+import dolfinx.io
+from networks_fenicsx import (
+    Config,
+    HydraulicNetworkAssembler,
+    NetworkMesh,
+    Solver,
+    network_generation,
+)
+from networks_fenicsx.post_processing import export_functions, extract_global_flux
 
 cfg = Config()
 cfg.outdir = "demo_Y_bifurcation"
 cfg.export = True
 cfg.clean = True
-# cfg.lcar = 0.25
+cfg.lcar = 0.25
 
 # Create Y bifurcation graph
-G = mesh_generation.make_Y_bifurcation(cfg)
+G = network_generation.make_tree(2, 1, 3)
+
+network_mesh = NetworkMesh(G, cfg)
 
 
 class p_bc_expr:
     def eval(self, x):
-        return np.full(x.shape[1], x[1])
-        # return np.full(x.shape[1], x[0])
+        return x[1]
 
 
-assembler = assembly.Assembler(cfg, G)
+assembler = HydraulicNetworkAssembler(cfg, network_mesh)
 assembler.compute_forms(p_bc_ex=p_bc_expr())
-assembler.assemble()
 
-solver = solver.Solver(cfg, G, assembler)
+
+solver = Solver(assembler)
+solver.assemble()
 sol = solver.solve()
-(fluxes, global_flux, pressure) = export(cfg, G, assembler.function_spaces, sol)
+
+global_flux = extract_global_flux(network_mesh, sol)
+
+# Export results
+with dolfinx.io.VTXWriter(
+    global_flux.function_space.mesh.comm,
+    cfg.outdir / "global_flux.bp",
+    [global_flux],
+) as vtx:
+    vtx.write(0.0)
+export_functions(functions=sol, outpath=cfg.outdir)
