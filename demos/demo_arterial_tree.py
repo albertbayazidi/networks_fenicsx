@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import networkx as ntx
 import numpy as np
 
@@ -29,7 +27,7 @@ cfg.lcar = 0.025
 cfg.clean_dir()
 cfg.clean = False
 
-p = Path(cfg.outdir)
+p = cfg.outdir
 p.mkdir(exist_ok=True)
 
 n = 5
@@ -43,7 +41,6 @@ assembler.compute_forms(p_bc_ex=p_bc_expr())
 # Solve
 
 solver = Solver(assembler, kind="nest")
-solver.timing_dir = cfg.outdir
 solver.assemble()
 sol = solver.solve()
 global_flux = extract_global_flux(network_mesh, sol)
@@ -51,11 +48,11 @@ global_flux = extract_global_flux(network_mesh, sol)
 # Export results
 with dolfinx.io.VTXWriter(
     global_flux.function_space.mesh.comm,
-    Path(cfg.outdir) / f"n{n}" / "global_flux.bp",
+    cfg.outdir / f"n{n}" / "global_flux.bp",
     [global_flux],
 ) as vtx:
     vtx.write(0.0)
 export_functions(
     functions=sol,
-    outpath=Path(cfg.outdir) / f"n{n}",
+    outpath=cfg.outdir / f"n{n}",
 )

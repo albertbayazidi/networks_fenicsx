@@ -8,7 +8,7 @@ This idea stems from the Graphnics project (https://doi.org/10.48550/arXiv.2212.
 https://github.com/IngeborgGjerde/fenics-networks by Ingeborg Gjerde.
 """
 
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from mpi4py import MPI
 
@@ -317,18 +317,23 @@ class NetworkMesh:
         send_count = original_cell_indices.size
         recv_counts = comm.gather(send_count, root=graph_rank)
         if comm.rank == graph_rank:
+            assert isinstance(recv_counts, Iterable)
             assert sum(recv_counts) == cells_.shape[0]
 
         # Send to rank 0 which tangents that we need
-        recv_buffer = None
+        recv_buffer: None | list[npt.NDArray[np.int64] | list[Any] | MPI.Datatype] = None
         if comm.rank == graph_rank:
+            assert recv_counts is not None
             recv_buffer = [np.empty(cells_.shape[0], dtype=np.int64), recv_counts, MPI.INT64_T]
 
         comm.Gatherv(sendbuf=original_cell_indices, recvbuf=recv_buffer, root=graph_rank)
         send_t_buffer = None
         if comm.rank == graph_rank:
+            assert recv_buffer is not None
+            recv_data = recv_buffer[0]
+            assert isinstance(recv_data, np.ndarray)
             send_t_buffer = [
-                tangents[recv_buffer[0]].flatten(),
+                tangents[recv_data].flatten(),
                 np.array(recv_counts) * self._geom_dim,
             ]
 

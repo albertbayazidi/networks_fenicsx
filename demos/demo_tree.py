@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from mpi4py import MPI
 
 import matplotlib.pyplot as plt
@@ -55,15 +53,14 @@ for i in range(10):
         },
         kind="mpi",
     )
-    solver.timing_dir = cfg.outdir
     solver.assemble()
     sol = solver.solve()
 
     global_flux = extract_global_flux(network_mesh, sol)
-    export_functions(sol, outpath=Path(cfg.outdir) / f"lcar_{lcar:.5e}")
+    export_functions(sol, outpath=cfg.outdir / f"lcar_{lcar:.5e}")
     with dolfinx.io.VTXWriter(
         global_flux.function_space.mesh.comm,
-        Path(cfg.outdir) / f"lcar_{lcar:.5e}" / "global_flux.bp",
+        cfg.outdir / f"lcar_{lcar:.5e}" / "global_flux.bp",
         [global_flux],
     ) as vtx:
         vtx.write(0.0)
@@ -89,4 +86,4 @@ if network_mesh.comm.rank == 0:
     ax.plot(lcars, min_q, "-bx", label="min flux")
     ax.legend()
     ax.grid()
-    plt.savefig(Path(cfg.outdir) / "convergence_flux_tree.png")
+    plt.savefig(cfg.outdir / "convergence_flux_tree.png")

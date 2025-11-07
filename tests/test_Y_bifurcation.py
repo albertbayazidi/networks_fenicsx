@@ -10,7 +10,6 @@ def test_Y_bifurcation(gdim: int, lcar: float):
     G = network_generation.make_tree(n=2, H=1, W=1, dim=gdim)
     config = Config()
     config.lcar = lcar
-    config.geometry_dim = gdim
     network_mesh = NetworkMesh(G, config)
 
     domain = network_mesh.mesh
