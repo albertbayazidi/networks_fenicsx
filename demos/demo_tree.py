@@ -25,11 +25,12 @@ class p_bc_expr:
         return np.full(x.shape[1], x[1])
 
 
-lcars, min_q, max_q, mean_q = [], [], [], []
-N = 1
+min_q, max_q, mean_q = [], [], []
 
 # Create tree
 G = network_generation.make_tree(n=2, H=1, W=1)
+
+N = 1
 lcars: list[float] = []
 for i in range(10):
     N *= 2
