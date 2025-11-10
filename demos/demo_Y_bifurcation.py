@@ -9,7 +9,7 @@ from networks_fenicsx import (
 )
 from networks_fenicsx.post_processing import export_functions, extract_global_flux
 
-outdir = Path("results_Y_bifurcation")
+outdir = Path(__file__).parent / "results_Y_bifurcation"
 outdir.mkdir(exist_ok=True, parents=True)
 
 # Create Y bifurcation graph

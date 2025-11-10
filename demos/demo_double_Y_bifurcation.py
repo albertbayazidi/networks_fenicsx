@@ -24,7 +24,7 @@ solver = Solver(assembler)
 solver.assemble()
 sol = solver.solve()
 
-print(__file__)
+
 outdir = Path("results_double_Y_bifurcation")
 global_flux = extract_global_flux(network_mesh, sol)
 export_functions(sol, outpath=outdir)
