@@ -27,7 +27,7 @@ from networks_fenicsx.post_processing import export_functions, extract_global_fl
 # -
 
 # Next, we define the boundary condition that we will prescribe for the pressure.
-# Here, we let the $p=y$.
+# Here, we let $p=y$.
 
 
 class PressureBC:
