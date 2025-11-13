@@ -143,7 +143,7 @@ for n in ns:
     )
     previous_timing["nxfx:HydraulicNetworkAssembler:assemble"] = assemble_timing
 
-    if n <= 20:
+    if n < 20:
         sol = solver.solve()
         _, solve_timing = timing("nxfx:Solver:solve")
         timings["Solve"][n] = (
