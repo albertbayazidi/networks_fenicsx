@@ -51,7 +51,7 @@ jit_options = {"cache_dir": cache_dir, "cffi_extra_compile_args": cffi_options}
 # Next, we will loop over a tree that has `n` generations, where each generation doubles the number
 # of branches.
 
-ns = [3, 6, 12, 20]
+ns = [3, 6, 12, 16]
 tracked_calls = [
     "nxfx:HydraulicNetworkAssembler:__init__",
     "nxfx:HydraulicNetworkAssembler:compute_forms",
