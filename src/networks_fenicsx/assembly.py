@@ -196,7 +196,7 @@ class HydraulicNetworkAssembler:
 
         if f is None:
             f = fem.Constant(self._network_mesh.mesh, 0.0)
-        
+
         if R is None:
             R = fem.Constant(self._network_mesh.mesh, 1.0)
 
@@ -251,7 +251,7 @@ class HydraulicNetworkAssembler:
             L[i] = p_bc * vs[i] * ds_edge(network_mesh.in_marker) - p_bc * vs[i] * ds_edge(
                 network_mesh.out_marker
             )
-        
+
         L[num_qs] += f * phi * dx_global
 
         # Multiplier mesh and flux share common parent mesh.
